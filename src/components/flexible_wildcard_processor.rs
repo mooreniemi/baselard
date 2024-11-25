@@ -16,6 +16,7 @@ impl Component for FlexibleWildcardProcessor {
             Data::Null => json!({ "type": "null" }),
             Data::Json(value) => value,
             Data::Integer(i) => json!({ "type": "integer", "value": i }),
+            Data::Float(f) => json!({ "type": "float", "value": f }),
             Data::Text(t) => json!({ "type": "text", "value": t }),
             Data::List(list) => {
                 let json_list: Vec<_> = list
@@ -40,6 +41,7 @@ impl Component for FlexibleWildcardProcessor {
         DataType::Union(vec![
             DataType::Json,
             DataType::Integer,
+            DataType::Float,
             DataType::Text,
             DataType::List(Box::new(DataType::Union(vec![
                 DataType::Integer,

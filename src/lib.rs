@@ -1,5 +1,6 @@
 pub mod component;
 pub mod dag;
+pub mod cache;
 
 pub mod components {
     pub mod adder;

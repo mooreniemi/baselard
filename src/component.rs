@@ -1,7 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
+use serde::{de::VariantAccess, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use tokio::sync::{oneshot, Mutex};
+use std::hash::{Hash, Hasher};
 
 use crate::dag::DAGError;
 
@@ -10,6 +12,7 @@ use crate::dag::DAGError;
 pub enum Data {
     Null,
     Integer(i32),
+    Float(f64),
     Text(String),
     List(Vec<Data>),
     Json(Value),
@@ -17,11 +20,48 @@ pub enum Data {
     OneConsumerChannel(Arc<Mutex<Option<oneshot::Receiver<Data>>>>),
 }
 
+impl Hash for Data {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Data::Null => {
+                "Null".hash(state);
+            }
+            Data::Integer(value) => {
+                "Integer".hash(state);
+                value.hash(state);
+            }
+            Data::Float(value) => {
+                "Float".hash(state);
+                value.to_bits().hash(state);
+            }
+            Data::Text(value) => {
+                "Text".hash(state);
+                value.hash(state);
+            }
+            Data::List(values) => {
+                "List".hash(state);
+                for value in values {
+                    value.hash(state);
+                }
+            }
+            Data::Json(value) => {
+                "Json".hash(state);
+                value.to_string().hash(state);
+            }
+            Data::OneConsumerChannel(_) => {
+                // Treat channels as opaque and hash a constant value instead.
+                "OneConsumerChannel".hash(state);
+            }
+        }
+    }
+}
+
 impl PartialEq for Data {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Data::Null, Data::Null) => true,
             (Data::Integer(a), Data::Integer(b)) => a == b,
+            (Data::Float(a), Data::Float(b)) => a == b,
             (Data::Text(a), Data::Text(b)) => a == b,
             (Data::List(a), Data::List(b)) => a == b,
             (Data::Json(a), Data::Json(b)) => a == b,
@@ -39,12 +79,86 @@ impl PartialEq for Data {
     }
 }
 
+impl Serialize for Data {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Data::Null => serializer.serialize_unit_variant("Data", 0, "Null"),
+            Data::Integer(i) => serializer.serialize_newtype_variant("Data", 1, "Integer", i),
+            Data::Float(f) => serializer.serialize_newtype_variant("Data", 2, "Float", f),
+            Data::Text(s) => serializer.serialize_newtype_variant("Data", 2, "Text", s),
+            Data::List(list) => serializer.serialize_newtype_variant("Data", 3, "List", list),
+            Data::Json(value) => serializer.serialize_newtype_variant("Data", 4, "Json", value),
+            Data::OneConsumerChannel(_) => {
+                // Serialize as an opaque placeholder
+                serializer.serialize_unit_variant("Data", 5, "OneConsumerChannel")
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Data {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Null,
+            Integer,
+            Float,
+            Text,
+            List,
+            Json,
+            OneConsumerChannel,
+        }
+
+        struct DataVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for DataVisitor {
+            type Value = Data;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("an enum representing Data")
+            }
+
+            fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::EnumAccess<'de>,
+            {
+                match data.variant()? {
+                    (Field::Null, _) => Ok(Data::Null),
+                    (Field::Integer, variant) => variant.newtype_variant().map(Data::Integer),
+                    (Field::Float, variant) => variant.newtype_variant().map(Data::Float),
+                    (Field::Text, variant) => variant.newtype_variant().map(Data::Text),
+                    (Field::List, variant) => variant.newtype_variant().map(Data::List),
+                    (Field::Json, variant) => variant.newtype_variant().map(Data::Json),
+                    (Field::OneConsumerChannel, _) => {
+                        // Deserialize as opaque placeholder
+                        Ok(Data::OneConsumerChannel(Arc::new(Mutex::new(None))))
+                    }
+                }
+            }
+        }
+
+        deserializer.deserialize_enum(
+            "Data",
+            &["Null", "Integer", "Float", "Text", "List", "Json", "OneConsumerChannel"],
+            DataVisitor,
+        )
+    }
+}
+
 /// Type information for validation during DAG construction
 #[derive(Debug, Clone, PartialEq)]
 pub enum DataType {
     /// Represents the absence of input for a component.
     Null,
     Integer,
+    Float,
     Text,
     List(Box<DataType>),
     Json,
@@ -158,6 +272,7 @@ impl Data {
         match self {
             Data::Null => DataType::Null,
             Data::Integer(_) => DataType::Integer,
+            Data::Float(_) => DataType::Float,
             Data::Text(_) => DataType::Text,
             Data::List(items) => {
                 if let Some(first) = items.first() {

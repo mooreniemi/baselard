@@ -1,15 +1,21 @@
 use indexmap::IndexMap;
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::hash::{Hash, Hasher, DefaultHasher};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
+use uuid::Uuid;
 
+use crate::cache::DAGCache;
+use crate::cache::DAGResult;
 use crate::component::ComponentRegistry;
 use crate::component::{Component, Data, DataType};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct NodeIR {
     id: String,
     namespace: Option<String>,
@@ -129,6 +135,37 @@ impl DAGIR {
 
         Ok(DAGIR { nodes, edges })
     }
+
+    pub fn calculate_hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+
+        // Hash nodes in a deterministic order
+        let mut sorted_nodes = self.nodes.clone();
+        sorted_nodes.sort_by(|a, b| a.id.cmp(&b.id));
+
+        for node in &sorted_nodes {
+            node.id.hash(&mut hasher);
+            node.namespace.hash(&mut hasher);
+            node.component_type.hash(&mut hasher);
+            node.config.to_string().hash(&mut hasher);  // Convert Value to string for hashing
+            node.inputs.hash(&mut hasher);
+        }
+
+        // Hash edges in a deterministic order
+        let mut sorted_edges: Vec<_> = self.edges.iter().collect();
+        sorted_edges.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
+
+        for (target, edges) in sorted_edges {
+            target.hash(&mut hasher);
+            let mut sorted_edges = edges.clone();
+            sorted_edges.sort_by(|a, b| a.source.cmp(&b.source));
+            for edge in sorted_edges {
+                edge.hash(&mut hasher);
+            }
+        }
+
+        hasher.finish()
+    }
 }
 
 #[derive(Debug)]
@@ -154,6 +191,14 @@ pub enum DAGError {
     CycleDetected,
     /// Represents no valid inputs for a node.
     NoValidInputs { node_id: String, expected: DataType },
+    /// Represents a historical result not found
+    HistoricalResultNotFound { request_id: String },
+    /// Represents a type system failure.
+    TypeSystemFailure {
+        component: String,
+        expected: DataType,
+        received: DataType,
+    },
 }
 
 impl std::fmt::Display for DAGError {
@@ -195,21 +240,53 @@ impl std::fmt::Display for DAGError {
                     node_id, expected
                 )
             }
+            DAGError::HistoricalResultNotFound { request_id } => {
+                write!(f, "No historical result found for request ID: {}", request_id)
+            }
+            DAGError::TypeSystemFailure { component, expected, received } => {
+                write!(f, "Type system failure in component {}: Expected {:?}, received {:?}", component, expected, received)
+            }
         }
     }
 }
 
 impl std::error::Error for DAGError {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DAGConfig {
     pub per_node_timeout_ms: Option<u64>,
+    pub enable_memory_cache: bool,
+    pub enable_history: bool,
+}
+
+impl DAGConfig {
+    pub fn enable_memory_cache(&self) -> bool {
+        self.enable_memory_cache
+    }
+
+    pub fn enable_history(&self) -> bool {
+        self.enable_history
+    }
+
+    pub fn per_node_timeout_ms(&self) -> Option<u64> {
+        self.per_node_timeout_ms
+    }
+
+    pub fn cache_off() -> Self {
+        Self {
+            per_node_timeout_ms: Some(100),
+            enable_memory_cache: false,
+            enable_history: false,
+        }
+    }
 }
 
 impl Default for DAGConfig {
     fn default() -> Self {
         DAGConfig {
             per_node_timeout_ms: Some(100),
+            enable_memory_cache: true,
+            enable_history: true,
         }
     }
 }
@@ -219,13 +296,17 @@ pub struct DAG {
     edges: Arc<HashMap<String, Vec<Edge>>>,
     initial_inputs: Arc<HashMap<String, Data>>,
     config: DAGConfig,
+    cache: Option<Arc<DAGCache>>,
+    ir_hash: u64,
 }
 impl DAG {
     pub fn from_ir(
         ir: DAGIR,
         registry: &ComponentRegistry,
         config: DAGConfig,
+        cache: Option<Arc<DAGCache>>,
     ) -> Result<Self, String> {
+        let ir_hash = ir.calculate_hash();
         let mut nodes = HashMap::new();
         let mut edges: HashMap<String, Vec<Edge>> = HashMap::new();
         let mut initial_inputs = HashMap::new();
@@ -284,6 +365,8 @@ impl DAG {
             edges: Arc::new(edges),
             initial_inputs: Arc::new(initial_inputs),
             config,
+            cache,
+            ir_hash,
         })
     }
 
@@ -291,6 +374,7 @@ impl DAG {
         match expected_type {
             DataType::Null => matches!(data, Data::Null),
             DataType::Integer => matches!(data, Data::Integer(_)),
+            DataType::Float => matches!(data, Data::Float(_)),
             DataType::Text => matches!(data, Data::Text(_)),
             DataType::List(element_type) => {
                 if let Data::List(items) = data {
@@ -307,13 +391,75 @@ impl DAG {
         }
     }
 
-    pub async fn execute(&self) -> Result<IndexMap<String, Data>, DAGError> {
+    pub async fn execute(
+        &self,
+        request_id: Option<String>,
+    ) -> Result<IndexMap<String, Data>, DAGError> {
+        let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+
         let mut results: IndexMap<String, Data> = IndexMap::new();
         results.extend((*self.initial_inputs).clone());
 
         let levels = self.group_into_levels()?;
+        let final_results = self.execute_levels(levels, results).await?;
 
-        self.execute_levels(levels, results).await
+        if let Some(cache) = &self.cache {
+            if self.config.enable_history {
+                let cache = Arc::clone(cache);
+                let copy_of_final_results = final_results.clone();
+                let inputs = self.initial_inputs.clone();
+                let request_id = request_id.clone();
+                let ir_hash = self.ir_hash;
+                tokio::spawn(async move {
+                    cache
+                        .store_result(ir_hash, &inputs, copy_of_final_results, Some(request_id))
+                        .await;
+                });
+            }
+        }
+
+        Ok(final_results)
+    }
+
+    pub fn get_cached_result(&self) -> Option<DAGResult> {
+        if !self.config.enable_memory_cache {
+            println!("Memory cache is disabled");
+            return None;
+        }
+        self.cache.as_ref().and_then(|c|
+            c.get_cached_result(self.ir_hash, &self.initial_inputs)
+        )
+    }
+
+    pub fn get_result_by_request_id(&self, request_id: &str) -> Option<DAGResult> {
+        if !self.config.enable_memory_cache {
+            return None;
+        }
+        self.cache.as_ref().and_then(|c|
+            c.get_result_by_request_id(request_id)
+        )
+    }
+
+    pub async fn get_cached_node_result(&self, node_id: &str) -> Option<Data> {
+        if !self.config.enable_memory_cache {
+            return None;
+        }
+        if let Some(cache) = &self.cache {
+            cache.get_cached_node_result(self.ir_hash, &self.initial_inputs, node_id)
+        } else {
+            None
+        }
+    }
+
+    pub async fn get_historical_result(&self, request_id: &str) -> Option<DAGResult> {
+        if !self.config.enable_history {
+            return None;
+        }
+        if let Some(cache) = &self.cache {
+            cache.get_historical_result(request_id).await
+        } else {
+            None
+        }
     }
 
     fn group_into_levels(&self) -> Result<Vec<Vec<String>>, DAGError> {
@@ -633,6 +779,29 @@ impl DAG {
                     Ok(Data::List(aggregated_results))
                 }
             }
+        }
+    }
+
+    /// Replay a previous execution by request ID
+    pub async fn replay(&self, request_id: &str) -> Result<IndexMap<String, Data>, DAGError> {
+        if !self.config.enable_history {
+            return Err(DAGError::InvalidConfiguration(
+                "History replay is disabled".to_string()
+            ));
+        }
+
+        if let Some(cache) = &self.cache {
+            if let Some(historical_result) = cache.get_historical_result(request_id).await {
+                Ok(historical_result.node_results)
+            } else {
+                Err(DAGError::HistoricalResultNotFound {
+                    request_id: request_id.to_string(),
+                })
+            }
+        } else {
+            Err(DAGError::InvalidConfiguration(
+                "Cache not configured".to_string()
+            ))
         }
     }
 }

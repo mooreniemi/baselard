@@ -1,6 +1,8 @@
+use baselard::cache::DAGCache;
 use baselard::component::ComponentRegistry;
 use baselard::component::Data;
 use baselard::components::*;
+use baselard::dag::DAGError;
 use baselard::dag::{DAGConfig, DAG, DAGIR};
 use indexmap::IndexMap;
 use serde_json::json;
@@ -104,9 +106,7 @@ async fn test_dag_execution() {
     let registry = setup_registry();
 
     let dag_ir = DAGIR::from_json(json_config).expect("Failed to parse valid JSON config");
-    let dag_config = DAGConfig {
-        per_node_timeout_ms: Some(100),
-    };
+    let dag_config = DAGConfig::cache_off();
 
     let mut expected_outputs: IndexMap<String, Data> = IndexMap::new();
     expected_outputs.insert(
@@ -143,8 +143,8 @@ async fn test_dag_execution() {
     );
     expected_outputs.insert("consumer".to_string(), Data::Integer(42));
 
-    match DAG::from_ir(dag_ir, &registry, dag_config) {
-        Ok(dag) => match dag.execute().await {
+    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
+        Ok(dag) => match dag.execute(None).await {
             Ok(results) => {
                 let results_vec: Vec<_> = results.into_iter().collect();
 
@@ -202,13 +202,11 @@ async fn test_dag_execution_with_errors() {
     let registry = setup_registry();
 
     let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
-    let dag_config = DAGConfig {
-        per_node_timeout_ms: Some(100),
-    };
+    let dag_config = DAGConfig::cache_off();
 
-    match DAG::from_ir(dag_ir, &registry, dag_config) {
+    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
-            if let Err(err) = dag.execute().await {
+            if let Err(err) = dag.execute(None).await {
                 println!("Execution error: {}", err);
                 assert!(err.to_string().contains("Simulated failure as configured"));
             } else {
@@ -243,13 +241,11 @@ async fn test_dag_execution_with_timeout() {
     let registry = setup_registry();
 
     let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
-    let dag_config = DAGConfig {
-        per_node_timeout_ms: Some(100),
-    };
+    let dag_config = DAGConfig::cache_off();
 
-    match DAG::from_ir(dag_ir, &registry, dag_config) {
+    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
-            if let Err(err) = dag.execute().await {
+            if let Err(err) = dag.execute(None).await {
                 println!("Execution error: {}", err);
                 assert!(err.to_string().contains("Execution timed out after 100ms"));
             } else {
@@ -287,13 +283,11 @@ async fn test_dag_deferred_execution() {
     let registry = setup_registry();
 
     let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
-    let dag_config = DAGConfig {
-        per_node_timeout_ms: Some(100),
-    };
+    let dag_config = DAGConfig::cache_off();
 
-    match DAG::from_ir(dag_ir, &registry, dag_config) {
+    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
-            if let Err(err) = dag.execute().await {
+            if let Err(err) = dag.execute(None).await {
                 panic!("Execution error: {}", err);
             }
         }
@@ -327,12 +321,10 @@ async fn test_dag_cycle_detection() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
-    let dag_config = DAGConfig {
-        per_node_timeout_ms: Some(100),
-    };
+    let dag_config = DAGConfig::cache_off();
 
-    match DAG::from_ir(dag_ir, &registry, dag_config) {
-        Ok(dag) => match dag.execute().await {
+    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
+        Ok(dag) => match dag.execute(None).await {
             Ok(_) => panic!("Expected cycle detection error"),
             Err(err) => {
                 assert!(
@@ -357,13 +349,11 @@ async fn test_dag_empty_graph() {
     let json_config = json!([]);
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
-    let dag_config = DAGConfig {
-        per_node_timeout_ms: Some(100),
-    };
+    let dag_config = DAGConfig::cache_off();
 
-    match DAG::from_ir(dag_ir, &registry, dag_config) {
+    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
-            let result = dag.execute().await;
+            let result = dag.execute(None).await;
             assert!(result.is_ok(), "Empty DAG should execute successfully");
             assert!(
                 result.unwrap().is_empty(),
@@ -385,11 +375,9 @@ async fn test_dag_invalid_component_type() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
-    let dag_config = DAGConfig {
-        per_node_timeout_ms: Some(100),
-    };
+    let dag_config = DAGConfig::cache_off();
 
-    if let Ok(_) = DAG::from_ir(dag_ir, &registry, dag_config) {
+    if let Ok(_) = DAG::from_ir(dag_ir, &registry, dag_config, None) {
         panic!("Expected error for invalid component type");
     }
 }
@@ -408,11 +396,9 @@ async fn test_dag_invalid_dependency() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
-    let dag_config = DAGConfig {
-        per_node_timeout_ms: Some(100),
-    };
+    let dag_config = DAGConfig::cache_off();
 
-    if let Ok(_) = DAG::from_ir(dag_ir, &registry, dag_config) {
+    if let Ok(_) = DAG::from_ir(dag_ir, &registry, dag_config, None) {
         panic!("Expected error for invalid dependency");
     }
 }
@@ -437,11 +423,9 @@ async fn test_dag_duplicate_node_ids() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
-    let dag_config = DAGConfig {
-        per_node_timeout_ms: Some(100),
-    };
+    let dag_config = DAGConfig::cache_off();
 
-    if let Ok(_) = DAG::from_ir(dag_ir, &registry, dag_config) {
+    if let Ok(_) = DAG::from_ir(dag_ir, &registry, dag_config, None) {
         panic!("Expected error for duplicate node IDs");
     }
 }
@@ -471,14 +455,12 @@ async fn test_dag_parallel_execution() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
-    let dag_config = DAGConfig {
-        per_node_timeout_ms: Some(200),
-    };
+    let dag_config = DAGConfig::cache_off();
 
-    match DAG::from_ir(dag_ir, &registry, dag_config) {
+    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
             let start = std::time::Instant::now();
-            let result = dag.execute().await;
+            let result = dag.execute(None).await;
             let duration = start.elapsed();
             println!("Result: {:?}", result);
 
@@ -498,7 +480,6 @@ async fn test_dag_invalid_json_config() {
     let invalid_configs = vec![
         json!([{
             "id": "node_1",
-
             "config": {}
         }]),
         json!([{
@@ -554,14 +535,12 @@ async fn test_dag_large_parallel_execution() {
     let json_config = Value::Array(config_array);
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
-    let dag_config = DAGConfig {
-        per_node_timeout_ms: Some(1000),
-    };
+    let dag_config = DAGConfig::cache_off();
 
-    match DAG::from_ir(dag_ir, &registry, dag_config) {
+    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
             let start = std::time::Instant::now();
-            let result = dag.execute().await;
+            let result = dag.execute(None).await;
             let duration = start.elapsed();
 
             assert!(result.is_ok(), "Large parallel DAG execution failed");
@@ -598,15 +577,204 @@ async fn test_dag_cleanup_on_failure() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
-    let dag_config = DAGConfig {
-        per_node_timeout_ms: Some(200),
-    };
+    let dag_config = DAGConfig::cache_off();
 
-    match DAG::from_ir(dag_ir, &registry, dag_config) {
+    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
-            let result = dag.execute().await;
+            let result = dag.execute(None).await;
             assert!(result.is_err(), "Expected execution to fail");
         }
         Err(err) => panic!("DAG construction error: {}", err),
     }
+}
+
+#[tokio::test]
+async fn test_dag_with_caching() {
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let history_file = temp_dir.path().join("dag_history.jsonl");
+    let cache = Arc::new(DAGCache::new(
+        Some(history_file.to_str().unwrap().to_string()),
+        10_000,
+    ));
+
+    let json_config = json!([
+        {
+            "id": "adder_1",
+            "component_type": "Adder",
+            "config": { "value": 5 },
+            "depends_on": [],
+            "inputs": 42
+        },
+        {
+            "id": "adder_2",
+            "component_type": "Adder",
+            "config": { "value": 10 },
+            "depends_on": ["adder_1"]
+        }
+    ]);
+
+    let registry = setup_registry();
+    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_config = DAGConfig::default();
+
+    let dag =
+        DAG::from_ir(dag_ir, &registry, dag_config, Some(Arc::clone(&cache))).expect("Valid DAG");
+
+    let request_id = "test-run-1".to_string();
+    let results = dag
+        .execute(Some(request_id.clone()))
+        .await
+        .expect("Execution success");
+
+    assert_eq!(results.get("adder_1"), Some(&Data::Integer(47)));
+    assert_eq!(results.get("adder_2"), Some(&Data::Integer(57)));
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    let cached_results = dag
+        .get_result_by_request_id(&request_id)
+        .expect("Cached results exist");
+    assert_eq!(results, cached_results.node_results);
+
+    let node_result = dag.get_cached_node_result("adder_1").await;
+    assert_eq!(node_result, Some(Data::Integer(47)));
+
+    let file_contents = tokio::fs::read_to_string(history_file)
+        .await
+        .expect("Failed to read history file");
+    println!("File contents: {}", file_contents);
+
+    assert!(file_contents.contains("\"request_id\":\"test-run-1\""));
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&file_contents).expect("File should contain valid JSON");
+
+    assert_eq!(parsed["request_id"], "test-run-1");
+    assert_eq!(parsed["node_results"]["adder_1"]["Integer"], 47);
+    assert_eq!(parsed["node_results"]["adder_2"]["Integer"], 57);
+}
+
+#[tokio::test]
+async fn test_dag_caching_with_channels() {
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let history_file = temp_dir.path().join("dag_history.jsonl");
+    let cache = Arc::new(DAGCache::new(
+        Some(history_file.to_str().unwrap().to_string()),
+        10_000,
+    ));
+
+    let json_config = json!([
+        {
+            "id": "long_task",
+            "component_type": "LongRunningTask",
+            "config": {},
+            "depends_on": []
+        },
+        {
+            "id": "consumer",
+            "component_type": "ChannelConsumer",
+            "config": {},
+            "depends_on": ["long_task"]
+        }
+    ]);
+
+    let registry = setup_registry();
+    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_config = DAGConfig::default();
+
+    let dag =
+        DAG::from_ir(dag_ir, &registry, dag_config, Some(Arc::clone(&cache))).expect("Valid DAG");
+
+    let request_id = "channel-test-1".to_string();
+    let results = dag
+        .execute(Some(request_id.clone()))
+        .await
+        .expect("Execution success");
+
+    assert_eq!(results.get("consumer"), Some(&Data::Integer(42)));
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    let cached_results = dag
+        .get_result_by_request_id(&request_id)
+        .expect("Cached results exist");
+    assert!(matches!(
+        cached_results.node_results.get("long_task"),
+        None | Some(Data::OneConsumerChannel(_))
+    ));
+
+    assert_eq!(
+        cached_results.node_results.get("consumer"),
+        Some(&Data::Integer(42))
+    );
+
+    let file_contents = tokio::fs::read_to_string(history_file)
+        .await
+        .expect("Failed to read history file");
+    println!("File contents: {}", file_contents);
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&file_contents).expect("File should contain valid JSON");
+
+    assert_eq!(parsed["node_results"]["long_task"], "OneConsumerChannel");
+
+    assert_eq!(parsed["node_results"]["consumer"]["Integer"], 42);
+}
+
+#[tokio::test]
+async fn test_dag_replay() {
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let history_file = temp_dir.path().join("replay_history.jsonl");
+    let cache = Arc::new(DAGCache::new(
+        Some(history_file),
+        10_000,
+    ));
+
+    let json_config = json!([
+        {
+            "id": "adder_1",
+            "component_type": "Adder",
+            "config": { "value": 5 },
+            "depends_on": [],
+            "inputs": 42
+        },
+        {
+            "id": "adder_2",
+            "component_type": "Adder",
+            "config": { "value": 10 },
+            "depends_on": ["adder_1"]
+        }
+    ]);
+
+    let registry = setup_registry();
+    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_config = DAGConfig::default();  // This enables history
+
+    let dag = DAG::from_ir(dag_ir, &registry, dag_config, Some(Arc::clone(&cache)))
+        .expect("Valid DAG");
+
+    // First execution
+    let request_id = "replay-test-1".to_string();
+    let original_results = dag
+        .execute(Some(request_id.clone()))
+        .await
+        .expect("Execution success");
+
+    // Small delay to ensure file is written
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    // Replay execution
+    let replayed_results = dag
+        .replay(&request_id)
+        .await
+        .expect("Replay success");
+
+    // Verify results match
+    assert_eq!(original_results, replayed_results);
+    assert_eq!(replayed_results.get("adder_1"), Some(&Data::Integer(47)));
+    assert_eq!(replayed_results.get("adder_2"), Some(&Data::Integer(57)));
+
+    // Test replay of non-existent request ID
+    let err = dag.replay("non-existent-id").await.unwrap_err();
+    assert!(matches!(err, DAGError::HistoricalResultNotFound { .. }));
 }
