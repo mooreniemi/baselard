@@ -7,7 +7,7 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::OpenOptions;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 use crate::component::Data;
 
@@ -137,7 +137,6 @@ impl DAGCache {
             Err(_) => return None,
         };
 
-        use tokio::io::AsyncBufReadExt;
         let reader = tokio::io::BufReader::new(file);
         let mut lines = reader.lines();
 

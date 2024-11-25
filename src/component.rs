@@ -305,6 +305,8 @@ pub trait Component: Send + Sync + 'static {
     }
 }
 
+/// A configure on demand registry of components.
+/// For performance might be better to cache configured components.
 pub struct ComponentRegistry {
     components: HashMap<String, Arc<dyn Fn(Value) -> Box<dyn Component>>>,
 }

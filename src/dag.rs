@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::hash::{Hash, Hasher, DefaultHasher};
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 use tokio::time::timeout;
 use uuid::Uuid;
 
@@ -39,6 +40,7 @@ struct Edge {
 
 impl DAGIR {
     pub fn from_json(json_config: Value) -> Result<Self, String> {
+        let start = Instant::now();
         let mut nodes = Vec::new();
         let mut edges: HashMap<String, Vec<Edge>> = HashMap::new();
 
@@ -133,6 +135,8 @@ impl DAGIR {
             }
         }
 
+        let duration = start.elapsed();
+        println!("DAGIR from_json took {:?}", duration);
         Ok(DAGIR { nodes, edges })
     }
 
