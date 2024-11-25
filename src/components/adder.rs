@@ -1,0 +1,38 @@
+use serde_json::Value;
+
+use crate::component::{Component, Data, DataType};
+use crate::dag::DAGError;
+
+pub struct Adder {
+    value: i32,
+}
+
+impl Component for Adder {
+    fn configure(config: Value) -> Self {
+        Adder {
+            value: config["value"].as_i64().unwrap() as i32,
+        }
+    }
+
+    fn execute(&self, input: Data) -> Result<Data, DAGError> {
+        println!("Adder input: {:?}", input);
+        let input_value = match input {
+            Data::Integer(v) => v,
+            Data::List(list) => list.into_iter().filter_map(|v| v.as_integer()).sum(),
+            _ => 0,
+        };
+
+        Ok(Data::Integer(input_value + self.value))
+    }
+
+    fn input_type(&self) -> DataType {
+        DataType::Union(vec![
+            DataType::Integer,
+            DataType::List(Box::new(DataType::Integer)),
+        ])
+    }
+
+    fn output_type(&self) -> DataType {
+        DataType::Integer
+    }
+}
