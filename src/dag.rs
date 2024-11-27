@@ -420,16 +420,27 @@ impl DAG {
             request_id
         );
 
-        let sorted_nodes = self.compute_execution_order()?;
+        let sorted_nodes = self.compute_execution_order(start_time.elapsed().as_secs_f32())?;
 
-        let (notifiers, shared_results) = self.setup_execution_state();
+        let (notifiers, shared_results) =
+            self.setup_execution_state(start_time.elapsed().as_secs_f32());
 
         let final_results = self
-            .execute_nodes(sorted_nodes, notifiers, shared_results, start_time)
+            .execute_nodes(
+                sorted_nodes,
+                notifiers,
+                shared_results,
+                start_time.elapsed().as_secs_f32(),
+            )
             .await?;
 
         if let Some(cache) = &self.cache {
-            self.handle_caching(cache, &final_results, &request_id);
+            self.handle_caching(
+                cache,
+                &final_results,
+                &request_id,
+                start_time.elapsed().as_secs_f32(),
+            );
         }
 
         println!(
@@ -439,8 +450,8 @@ impl DAG {
         Ok(final_results)
     }
 
-    fn compute_execution_order(&self) -> Result<Vec<String>, DAGError> {
-        println!("[0.00s] Starting topological sort");
+    fn compute_execution_order(&self, elapsed_secs: f32) -> Result<Vec<String>, DAGError> {
+        println!("[{:.2}s] Starting topological sort", elapsed_secs);
         let mut in_degree: HashMap<String, usize> = HashMap::new();
         let mut graph: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -486,8 +497,8 @@ impl DAG {
         }
 
         println!(
-            "[0.00s] Topological sort complete. Execution order: {:?}",
-            sorted_nodes
+            "[{:.2}s] Topological sort complete. Execution order: {:?}",
+            elapsed_secs, sorted_nodes
         );
 
         if sorted_nodes.len() != self.nodes.len() {
@@ -499,16 +510,18 @@ impl DAG {
 
     fn setup_execution_state(
         &self,
+        elapsed_secs: f32,
     ) -> (
         Arc<Mutex<HashMap<String, watch::Sender<()>>>>,
         Arc<Mutex<IndexMap<String, Data>>>,
     ) {
-        println!("[0.00s] Setting up notification channels");
+        println!("[{:.2}s] Setting up notification channels", elapsed_secs);
 
         let mut results = IndexMap::new();
         results.extend((*self.initial_inputs).clone());
         println!(
-            "[0.00s] Initialized with {} initial inputs",
+            "[{:.2}s] Initialized with {} initial inputs",
+            elapsed_secs,
             self.initial_inputs.len()
         );
 
@@ -523,7 +536,7 @@ impl DAG {
         sorted_nodes: Vec<String>,
         notifiers: Arc<Mutex<HashMap<String, watch::Sender<()>>>>,
         shared_results: Arc<Mutex<IndexMap<String, Data>>>,
-        start_time: Instant,
+        elapsed_secs: f32,
     ) -> Result<IndexMap<String, Data>, DAGError> {
         for node_id in &sorted_nodes {
             let (tx, _) = watch::channel(());
@@ -532,7 +545,7 @@ impl DAG {
 
         println!(
             "[{:.2}s] Spawning tasks for {} nodes",
-            start_time.elapsed().as_secs_f32(),
+            elapsed_secs,
             sorted_nodes.len()
         );
 
@@ -542,14 +555,11 @@ impl DAG {
                 node_id,
                 Arc::clone(&notifiers),
                 Arc::clone(&shared_results),
-                start_time,
+                elapsed_secs,
             ));
         }
 
-        println!(
-            "[{:.2}s] Waiting for all tasks to complete",
-            start_time.elapsed().as_secs_f32()
-        );
+        println!("[{:.2}s] Waiting for all tasks to complete", elapsed_secs);
 
         for handle in handles {
             handle.await.map_err(|e| DAGError::ExecutionError {
@@ -559,10 +569,7 @@ impl DAG {
         }
 
         let final_results = (*shared_results.lock().unwrap()).clone();
-        println!(
-            "[{:.2}s] All tasks completed",
-            start_time.elapsed().as_secs_f32()
-        );
+        println!("[{:.2}s] All tasks completed", elapsed_secs);
         println!("Final results: {:?}", final_results);
 
         Ok(final_results)
@@ -573,7 +580,7 @@ impl DAG {
         node_id: String,
         notifiers: Arc<Mutex<HashMap<String, watch::Sender<()>>>>,
         shared_results: Arc<Mutex<IndexMap<String, Data>>>,
-        task_start_time: Instant,
+        elapsed_secs: f32,
     ) -> tokio::task::JoinHandle<Result<(), DAGError>> {
         let mut receivers = HashMap::new();
         if let Some(edges) = self.edges.get(&node_id) {
@@ -592,11 +599,12 @@ impl DAG {
         let node_id_for_async = node_id.clone();
         let shared_results_for_async = Arc::clone(&shared_results);
         let notifiers_for_async = Arc::clone(&notifiers);
+        let start_time = Instant::now();
 
         tokio::spawn(async move {
             println!(
                 "[{:.2}s] Starting task for node {}",
-                task_start_time.elapsed().as_secs_f32(),
+                elapsed_secs + start_time.elapsed().as_secs_f32(),
                 node_id_for_async
             );
 
@@ -611,7 +619,7 @@ impl DAG {
 
             println!(
                 "[{:.2}s] Node {} dependencies satisfied, executing",
-                task_start_time.elapsed().as_secs_f32(),
+                elapsed_secs + start_time.elapsed().as_secs_f32(),
                 node_id_for_async
             );
 
@@ -662,7 +670,7 @@ impl DAG {
                 Ok((id, output)) => {
                     println!(
                         "[{:.2}s] Node {} completed successfully",
-                        task_start_time.elapsed().as_secs_f32(),
+                        elapsed_secs + start_time.elapsed().as_secs_f32(),
                         id
                     );
                     shared_results_for_async
@@ -677,7 +685,7 @@ impl DAG {
                 Err(e) => {
                     println!(
                         "[{:.2}s] Node {} failed: {:?}",
-                        task_start_time.elapsed().as_secs_f32(),
+                        elapsed_secs + start_time.elapsed().as_secs_f32(),
                         node_id_for_error,
                         e
                     );
@@ -735,21 +743,20 @@ impl DAG {
         cache: &Arc<DAGCache>,
         final_results: &IndexMap<String, Data>,
         request_id: &str,
+        elapsed_secs: f32,
     ) {
-        if self.config.enable_history {
-            println!("[0.00s] Caching results");
-            let cache = Arc::clone(cache);
-            let results_copy = final_results.clone();
-            let inputs = self.initial_inputs.clone();
-            let request_id = request_id.to_string();
-            let ir_hash = self.ir_hash;
+        println!("[{:.2}s] Caching results", elapsed_secs);
+        let cache = Arc::clone(cache);
+        let results_copy = final_results.clone();
+        let inputs = self.initial_inputs.clone();
+        let request_id = request_id.to_string();
+        let ir_hash = self.ir_hash;
 
-            tokio::spawn(async move {
-                cache
-                    .store_result(ir_hash, &inputs, results_copy, Some(request_id))
-                    .await;
-            });
-        }
+        tokio::spawn(async move {
+            cache
+                .store_result(ir_hash, &inputs, results_copy, Some(request_id))
+                .await;
+        });
     }
 
     /// Replay a previous execution by request ID
