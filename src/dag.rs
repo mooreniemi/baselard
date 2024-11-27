@@ -4,10 +4,14 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::hash::{Hash, Hasher, DefaultHasher};
+use std::collections::VecDeque;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
+use tokio::sync::watch;
+use tokio::task;
 use tokio::time::timeout;
 use uuid::Uuid;
 
@@ -143,7 +147,6 @@ impl DAGIR {
     pub fn calculate_hash(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
 
-        // Hash nodes in a deterministic order
         let mut sorted_nodes = self.nodes.clone();
         sorted_nodes.sort_by(|a, b| a.id.cmp(&b.id));
 
@@ -151,11 +154,10 @@ impl DAGIR {
             node.id.hash(&mut hasher);
             node.namespace.hash(&mut hasher);
             node.component_type.hash(&mut hasher);
-            node.config.to_string().hash(&mut hasher);  // Convert Value to string for hashing
+            node.config.to_string().hash(&mut hasher);
             node.inputs.hash(&mut hasher);
         }
 
-        // Hash edges in a deterministic order
         let mut sorted_edges: Vec<_> = self.edges.iter().collect();
         sorted_edges.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
 
@@ -245,10 +247,22 @@ impl std::fmt::Display for DAGError {
                 )
             }
             DAGError::HistoricalResultNotFound { request_id } => {
-                write!(f, "No historical result found for request ID: {}", request_id)
+                write!(
+                    f,
+                    "No historical result found for request ID: {}",
+                    request_id
+                )
             }
-            DAGError::TypeSystemFailure { component, expected, received } => {
-                write!(f, "Type system failure in component {}: Expected {:?}, received {:?}", component, expected, received)
+            DAGError::TypeSystemFailure {
+                component,
+                expected,
+                received,
+            } => {
+                write!(
+                    f,
+                    "Type system failure in component {}: Expected {:?}, received {:?}",
+                    component, expected, received
+                )
             }
         }
     }
@@ -278,7 +292,7 @@ impl DAGConfig {
 
     pub fn cache_off() -> Self {
         Self {
-            per_node_timeout_ms: Some(100),
+            per_node_timeout_ms: Some(200),
             enable_memory_cache: false,
             enable_history: false,
         }
@@ -288,7 +302,7 @@ impl DAGConfig {
 impl Default for DAGConfig {
     fn default() -> Self {
         DAGConfig {
-            per_node_timeout_ms: Some(100),
+            per_node_timeout_ms: Some(200),
             enable_memory_cache: true,
             enable_history: true,
         }
@@ -390,7 +404,6 @@ impl DAG {
                 }
             }
             DataType::Json => matches!(data, Data::Json(_)),
-            DataType::OneConsumerChannel(_) => matches!(data, Data::OneConsumerChannel(_)),
             DataType::Union(types) => types.iter().any(|t| DAG::validate_data_type(data, t)),
         }
     }
@@ -399,30 +412,367 @@ impl DAG {
         &self,
         request_id: Option<String>,
     ) -> Result<IndexMap<String, Data>, DAGError> {
+        let start_time = Instant::now();
         let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        println!(
+            "[{:.2}s] Starting DAG execution with request_id: {}",
+            start_time.elapsed().as_secs_f32(),
+            request_id
+        );
 
-        let mut results: IndexMap<String, Data> = IndexMap::new();
-        results.extend((*self.initial_inputs).clone());
+        let sorted_nodes = self.compute_execution_order()?;
 
-        let levels = self.group_into_levels()?;
-        let final_results = self.execute_levels(levels, results).await?;
+        let (notifiers, shared_results) = self.setup_execution_state();
+
+        let final_results = self
+            .execute_nodes(sorted_nodes, notifiers, shared_results, start_time)
+            .await?;
 
         if let Some(cache) = &self.cache {
-            if self.config.enable_history {
-                let cache = Arc::clone(cache);
-                let copy_of_final_results = final_results.clone();
-                let inputs = self.initial_inputs.clone();
-                let request_id = request_id.clone();
-                let ir_hash = self.ir_hash;
-                tokio::spawn(async move {
-                    cache
-                        .store_result(ir_hash, &inputs, copy_of_final_results, Some(request_id))
-                        .await;
-                });
+            self.handle_caching(cache, &final_results, &request_id);
+        }
+
+        println!(
+            "[{:.2}s] DAG execution completed",
+            start_time.elapsed().as_secs_f32()
+        );
+        Ok(final_results)
+    }
+
+    fn compute_execution_order(&self) -> Result<Vec<String>, DAGError> {
+        println!("[0.00s] Starting topological sort");
+        let mut in_degree: HashMap<String, usize> = HashMap::new();
+        let mut graph: HashMap<String, Vec<String>> = HashMap::new();
+
+        for node_id in self.nodes.keys() {
+            graph.entry(node_id.clone()).or_default();
+            in_degree.entry(node_id.clone()).or_insert(0);
+        }
+
+        for edges in self.edges.values() {
+            for edge in edges {
+                *in_degree.entry(edge.target.clone()).or_default() += 1;
+                graph
+                    .entry(edge.source.clone())
+                    .or_default()
+                    .push(edge.target.clone());
             }
         }
 
+        println!("Initial in-degrees: {:?}", in_degree);
+
+        let mut zero_degree_nodes: Vec<_> = in_degree
+            .iter()
+            .filter(|(_, &degree)| degree == 0)
+            .map(|(node, _)| node.clone())
+            .collect();
+        zero_degree_nodes.sort();
+        let mut queue: VecDeque<_> = zero_degree_nodes.into();
+
+        let mut sorted_nodes = Vec::new();
+        while let Some(node) = queue.pop_front() {
+            sorted_nodes.push(node.clone());
+
+            if let Some(children) = graph.get(&node) {
+                for child in children {
+                    if let Some(degree) = in_degree.get_mut(child) {
+                        *degree -= 1;
+                        if *degree == 0 {
+                            queue.push_back(child.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        println!(
+            "[0.00s] Topological sort complete. Execution order: {:?}",
+            sorted_nodes
+        );
+
+        if sorted_nodes.len() != self.nodes.len() {
+            return Err(DAGError::CycleDetected);
+        }
+
+        Ok(sorted_nodes)
+    }
+
+    fn setup_execution_state(
+        &self,
+    ) -> (
+        Arc<Mutex<HashMap<String, watch::Sender<()>>>>,
+        Arc<Mutex<IndexMap<String, Data>>>,
+    ) {
+        println!("[0.00s] Setting up notification channels");
+
+        let mut results = IndexMap::new();
+        results.extend((*self.initial_inputs).clone());
+        println!(
+            "[0.00s] Initialized with {} initial inputs",
+            self.initial_inputs.len()
+        );
+
+        let notifiers = Arc::new(Mutex::new(HashMap::new()));
+        let shared_results = Arc::new(Mutex::new(results));
+
+        (notifiers, shared_results)
+    }
+
+    async fn execute_nodes(
+        &self,
+        sorted_nodes: Vec<String>,
+        notifiers: Arc<Mutex<HashMap<String, watch::Sender<()>>>>,
+        shared_results: Arc<Mutex<IndexMap<String, Data>>>,
+        start_time: Instant,
+    ) -> Result<IndexMap<String, Data>, DAGError> {
+        for node_id in &sorted_nodes {
+            let (tx, _) = watch::channel(());
+            notifiers.lock().unwrap().insert(node_id.clone(), tx);
+        }
+
+        println!(
+            "[{:.2}s] Spawning tasks for {} nodes",
+            start_time.elapsed().as_secs_f32(),
+            sorted_nodes.len()
+        );
+
+        let mut handles = Vec::new();
+        for node_id in sorted_nodes {
+            handles.push(self.spawn_node_task(
+                node_id,
+                Arc::clone(&notifiers),
+                Arc::clone(&shared_results),
+                start_time,
+            ));
+        }
+
+        println!(
+            "[{:.2}s] Waiting for all tasks to complete",
+            start_time.elapsed().as_secs_f32()
+        );
+
+        for handle in handles {
+            handle.await.map_err(|e| DAGError::ExecutionError {
+                node_id: "unknown".to_string(),
+                reason: format!("Task join error: {}", e),
+            })??;
+        }
+
+        let final_results = (*shared_results.lock().unwrap()).clone();
+        println!(
+            "[{:.2}s] All tasks completed",
+            start_time.elapsed().as_secs_f32()
+        );
+        println!("Final results: {:?}", final_results);
+
         Ok(final_results)
+    }
+
+    fn spawn_node_task(
+        &self,
+        node_id: String,
+        notifiers: Arc<Mutex<HashMap<String, watch::Sender<()>>>>,
+        shared_results: Arc<Mutex<IndexMap<String, Data>>>,
+        task_start_time: Instant,
+    ) -> tokio::task::JoinHandle<Result<(), DAGError>> {
+        let mut receivers = HashMap::new();
+        if let Some(edges) = self.edges.get(&node_id) {
+            for edge in edges {
+                if let Some(sender) = notifiers.lock().unwrap().get(&edge.source) {
+                    receivers.insert(edge.source.clone(), sender.subscribe());
+                }
+            }
+        }
+
+        let nodes = Arc::clone(&self.nodes);
+        let edges = Arc::clone(&self.edges);
+        let initial_inputs = Arc::clone(&self.initial_inputs);
+        let timeout_ms = self.config.per_node_timeout_ms();
+
+        let node_id_for_async = node_id.clone();
+        let shared_results_for_async = Arc::clone(&shared_results);
+        let notifiers_for_async = Arc::clone(&notifiers);
+
+        tokio::spawn(async move {
+            println!(
+                "[{:.2}s] Starting task for node {}",
+                task_start_time.elapsed().as_secs_f32(),
+                node_id_for_async
+            );
+
+            for receiver in receivers.values_mut() {
+                if let Err(e) = receiver.changed().await {
+                    return Err(DAGError::ExecutionError {
+                        node_id: node_id_for_async.clone(),
+                        reason: format!("Failed to receive dependency notification: {}", e),
+                    });
+                }
+            }
+
+            println!(
+                "[{:.2}s] Node {} dependencies satisfied, executing",
+                task_start_time.elapsed().as_secs_f32(),
+                node_id_for_async
+            );
+
+            let node_id_for_blocking = node_id_for_async.clone();
+            let shared_results_for_blocking = Arc::clone(&shared_results_for_async);
+
+            let execution = task::spawn_blocking(move || {
+                let input_data = {
+                    let results_guard = shared_results_for_blocking.lock().unwrap();
+                    Self::prepare_input_data(
+                        &node_id_for_blocking,
+                        edges
+                            .get(&node_id_for_blocking)
+                            .map(|e| e.as_slice())
+                            .unwrap_or(&[]),
+                        &results_guard,
+                        &initial_inputs,
+                        &nodes.get(&node_id_for_blocking).unwrap().input_type(),
+                    )?
+                };
+
+                let component = nodes.get(&node_id_for_blocking).unwrap();
+                let output = component.execute(input_data)?;
+                Ok((node_id_for_blocking, output))
+            });
+
+            let node_id_for_error = node_id_for_async.clone();
+
+            let result = if let Some(ms) = timeout_ms {
+                match timeout(Duration::from_millis(ms), execution).await {
+                    Ok(result) => result.map_err(|e| DAGError::ExecutionError {
+                        node_id: node_id_for_error.clone(),
+                        reason: format!("Task join error: {}", e),
+                    })?,
+                    Err(_) => Err(DAGError::ExecutionError {
+                        node_id: node_id_for_error.clone(),
+                        reason: format!("Node execution timed out after {}ms", ms),
+                    }),
+                }
+            } else {
+                execution.await.map_err(|e| DAGError::ExecutionError {
+                    node_id: node_id_for_error.clone(),
+                    reason: format!("Task join error: {}", e),
+                })?
+            };
+
+            match result {
+                Ok((id, output)) => {
+                    println!(
+                        "[{:.2}s] Node {} completed successfully",
+                        task_start_time.elapsed().as_secs_f32(),
+                        id
+                    );
+                    shared_results_for_async
+                        .lock()
+                        .unwrap()
+                        .insert(id.clone(), output);
+                    if let Some(sender) = notifiers_for_async.lock().unwrap().get(&id) {
+                        let _ = sender.send(());
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    println!(
+                        "[{:.2}s] Node {} failed: {:?}",
+                        task_start_time.elapsed().as_secs_f32(),
+                        node_id_for_error,
+                        e
+                    );
+                    Err(e)
+                }
+            }
+        })
+    }
+
+    fn prepare_input_data(
+        node_id: &str,
+        edges: &[Edge],
+        results: &IndexMap<String, Data>,
+        initial_inputs: &HashMap<String, Data>,
+        expected_type: &DataType,
+    ) -> Result<Data, DAGError> {
+        println!("Preparing input data for node {}", node_id);
+
+        if !edges.is_empty() {
+            let mut valid_inputs = Vec::new();
+            for edge in edges {
+                if let Some(output) = results.get(&edge.source) {
+                    valid_inputs.push(output.clone());
+                } else {
+                    return Err(DAGError::MissingDependency {
+                        node_id: node_id.to_string(),
+                        dependency_id: edge.source.clone(),
+                    });
+                }
+            }
+
+            if valid_inputs.len() == 1 {
+                let input = valid_inputs.pop().unwrap();
+                if !Self::validate_data_type(&input, expected_type) {
+                    return Err(DAGError::TypeMismatch {
+                        node_id: node_id.to_string(),
+                        expected: expected_type.clone(),
+                        actual: input.get_type(),
+                    });
+                }
+                return Ok(input);
+            }
+            return Ok(Data::List(valid_inputs));
+        }
+
+        if let Some(input) = initial_inputs.get(node_id) {
+            return Ok(input.clone());
+        }
+
+        Ok(Data::Null)
+    }
+
+    fn handle_caching(
+        &self,
+        cache: &Arc<DAGCache>,
+        final_results: &IndexMap<String, Data>,
+        request_id: &str,
+    ) {
+        if self.config.enable_history {
+            println!("[0.00s] Caching results");
+            let cache = Arc::clone(cache);
+            let results_copy = final_results.clone();
+            let inputs = self.initial_inputs.clone();
+            let request_id = request_id.to_string();
+            let ir_hash = self.ir_hash;
+
+            tokio::spawn(async move {
+                cache
+                    .store_result(ir_hash, &inputs, results_copy, Some(request_id))
+                    .await;
+            });
+        }
+    }
+
+    /// Replay a previous execution by request ID
+    pub async fn replay(&self, request_id: &str) -> Result<IndexMap<String, Data>, DAGError> {
+        if !self.config.enable_history {
+            return Err(DAGError::InvalidConfiguration(
+                "History replay is disabled".to_string(),
+            ));
+        }
+
+        if let Some(cache) = &self.cache {
+            if let Some(historical_result) = cache.get_historical_result(request_id).await {
+                Ok(historical_result.node_results)
+            } else {
+                Err(DAGError::HistoricalResultNotFound {
+                    request_id: request_id.to_string(),
+                })
+            }
+        } else {
+            Err(DAGError::InvalidConfiguration(
+                "Cache not configured".to_string(),
+            ))
+        }
     }
 
     pub fn get_cached_result(&self) -> Option<DAGResult> {
@@ -430,18 +780,18 @@ impl DAG {
             println!("Memory cache is disabled");
             return None;
         }
-        self.cache.as_ref().and_then(|c|
-            c.get_cached_result(self.ir_hash, &self.initial_inputs)
-        )
+        self.cache
+            .as_ref()
+            .and_then(|c| c.get_cached_result(self.ir_hash, &self.initial_inputs))
     }
 
     pub fn get_result_by_request_id(&self, request_id: &str) -> Option<DAGResult> {
         if !self.config.enable_memory_cache {
             return None;
         }
-        self.cache.as_ref().and_then(|c|
-            c.get_result_by_request_id(request_id)
-        )
+        self.cache
+            .as_ref()
+            .and_then(|c| c.get_result_by_request_id(request_id))
     }
 
     pub async fn get_cached_node_result(&self, node_id: &str) -> Option<Data> {
@@ -463,349 +813,6 @@ impl DAG {
             cache.get_historical_result(request_id).await
         } else {
             None
-        }
-    }
-
-    fn group_into_levels(&self) -> Result<Vec<Vec<String>>, DAGError> {
-        let mut levels: Vec<Vec<String>> = Vec::new();
-        let mut remaining_nodes: HashSet<String> = self.nodes.keys().cloned().collect();
-        let mut deferred_nodes: HashSet<String> = HashSet::new();
-
-        for (node_id, component) in self.nodes.iter() {
-            if component.is_deferrable() {
-                deferred_nodes.insert(node_id.clone());
-                self.mark_dependent_nodes_deferred(node_id, &mut deferred_nodes);
-            }
-        }
-        println!("ZERO PASS: Deferred nodes: {:?}", deferred_nodes);
-
-        let mut processed_nodes: HashSet<String> = HashSet::new();
-        while remaining_nodes.iter().any(|n| !deferred_nodes.contains(n)) {
-            println!("FIRST PASS: Remaining nodes: {:?}", remaining_nodes);
-            let ready_nodes: Vec<String> = remaining_nodes
-                .iter()
-                .filter(|node| {
-                    if deferred_nodes.contains(*node) {
-                        return false;
-                    }
-                    let deps = self.edges.get(*node).map(|d| d.as_slice()).unwrap_or(&[]);
-                    deps.iter().all(|dep| processed_nodes.contains(&dep.source))
-                })
-                .cloned()
-                .collect();
-
-            if ready_nodes.is_empty() && remaining_nodes.iter().any(|n| !deferred_nodes.contains(n))
-            {
-                return Err(DAGError::CycleDetected);
-            }
-
-            if !ready_nodes.is_empty() {
-                levels.push(ready_nodes.clone());
-                for node in ready_nodes {
-                    processed_nodes.insert(node.clone());
-                    remaining_nodes.remove(&node);
-                }
-            }
-        }
-
-        while !remaining_nodes.is_empty() {
-            println!("SECOND PASS: Remaining nodes: {:?}", remaining_nodes);
-            let ready_nodes: Vec<String> = remaining_nodes
-                .iter()
-                .filter(|node| {
-                    let deps = self.edges.get(*node).map(|d| d.as_slice()).unwrap_or(&[]);
-                    deps.iter()
-                        .all(|dep| !remaining_nodes.contains(&dep.source))
-                })
-                .cloned()
-                .collect();
-
-            if ready_nodes.is_empty() {
-                return Err(DAGError::CycleDetected);
-            }
-
-            let mut current_level = if !levels.is_empty() {
-                levels.pop().unwrap()
-            } else {
-                Vec::new()
-            };
-
-            for node in ready_nodes {
-                println!(
-                    "SECOND PASS: Checking if {} can execute together with {:?}",
-                    node, current_level
-                );
-                if current_level.iter().all(|other| {
-                    self.can_execute_together(other, &node)
-                        && !self.has_dependency_between(other, &node)
-                        && !self.has_dependency_between(&node, other)
-                }) {
-                    current_level.push(node.clone());
-                } else {
-                    levels.push(current_level);
-                    current_level = vec![node.clone()];
-                }
-                remaining_nodes.remove(&node);
-            }
-
-            if !current_level.is_empty() {
-                levels.push(current_level);
-            }
-        }
-
-        Ok(levels)
-    }
-
-    fn can_execute_together(&self, node1: &str, node2: &str) -> bool {
-        println!("Checking if {} and {} can execute together", node1, node2);
-        let deps1 = self
-            .edges
-            .get(node1)
-            .map(|e| e.iter().map(|edge| &edge.source).collect::<HashSet<_>>())
-            .unwrap_or_default();
-        let deps2 = self
-            .edges
-            .get(node2)
-            .map(|e| e.iter().map(|edge| &edge.source).collect::<HashSet<_>>())
-            .unwrap_or_default();
-
-        let result = deps1.is_disjoint(&deps2);
-        println!("{} and {} can execute together: {}", node1, node2, result);
-        result
-    }
-
-    fn has_dependency_between(&self, from: &str, to: &str) -> bool {
-        self.edges
-            .get(to)
-            .map(|edges| edges.iter().any(|e| e.source == from))
-            .unwrap_or(false)
-    }
-
-    fn mark_dependent_nodes_deferred(&self, node: &str, deferred_nodes: &mut HashSet<String>) {
-        for (target, edges) in self.edges.iter() {
-            if edges.iter().any(|edge| edge.source == node) {
-                if deferred_nodes.insert(target.clone()) {
-                    self.mark_dependent_nodes_deferred(target, deferred_nodes);
-                }
-            }
-        }
-    }
-
-    async fn execute_levels(
-        &self,
-        levels: Vec<Vec<String>>,
-        mut results: IndexMap<String, Data>,
-    ) -> Result<IndexMap<String, Data>, DAGError> {
-        for (level_idx, level) in levels.iter().enumerate() {
-            println!("Executing level {}: {:?}", level_idx, level);
-
-            let level_results = self.execute_level(level, &results).await?;
-            results.extend(level_results);
-        }
-
-        println!("Final results: {:?}", results);
-        Ok(results)
-    }
-
-    async fn execute_level(
-        &self,
-        level: &[String],
-        results: &IndexMap<String, Data>,
-    ) -> Result<Vec<(String, Data)>, DAGError> {
-        let timeout_ms = self.config.per_node_timeout_ms.unwrap_or(100);
-        let nodes = Arc::clone(&self.nodes);
-        let edges = Arc::clone(&self.edges);
-        let initial_inputs = Arc::clone(&self.initial_inputs);
-
-        let level_results = futures::future::join_all(level.iter().map(|node_id| {
-            let node_id = node_id.clone();
-            let results = results.clone();
-            let nodes = Arc::clone(&nodes);
-            let edges = Arc::clone(&edges);
-            let initial_inputs = Arc::clone(&initial_inputs);
-
-            async move {
-                let node_id_for_error = node_id.clone();
-
-                println!("Executing node {} in spawn_blocking", node_id);
-                let handle = tokio::task::spawn_blocking(move || {
-                    Self::execute_node(&node_id, &results, &nodes, &edges, &initial_inputs)
-                });
-
-                match timeout(Duration::from_millis(timeout_ms), handle).await {
-                    Ok(Ok(Ok(result))) => Ok(result),
-                    Ok(Ok(Err(e))) => Err(e),
-                    Ok(Err(join_error)) => Err(DAGError::ExecutionError {
-                        node_id: node_id_for_error,
-                        reason: format!("Task join error: {:?}", join_error),
-                    }),
-                    Err(_) => Err(DAGError::ExecutionError {
-                        node_id: node_id_for_error,
-                        reason: format!("Execution timed out after {}ms", timeout_ms),
-                    }),
-                }
-            }
-        }))
-        .await;
-
-        level_results
-            .into_iter()
-            .map(|res| res.map_err(|e| e))
-            .collect()
-    }
-
-    fn execute_node(
-        node_id: &str,
-        results: &IndexMap<String, Data>,
-        nodes: &HashMap<String, Box<dyn Component>>,
-        edges: &HashMap<String, Vec<Edge>>,
-        initial_inputs: &HashMap<String, Data>,
-    ) -> Result<(String, Data), DAGError> {
-        let component = nodes.get(node_id).ok_or_else(|| DAGError::ExecutionError {
-            node_id: node_id.to_string(),
-            reason: "Component not found".to_string(),
-        })?;
-
-        let expected_input_type = component.input_type();
-
-        let input_data = if expected_input_type == DataType::Null {
-            Data::Null
-        } else {
-            Self::prepare_input_data(
-                node_id,
-                edges.get(node_id).map(|e| e.as_slice()).unwrap_or(&[]),
-                results,
-                initial_inputs,
-                &expected_input_type,
-            )?
-        };
-
-        if expected_input_type != DataType::Null
-            && !Self::validate_data_type(&input_data, &expected_input_type)
-        {
-            return Err(DAGError::TypeMismatch {
-                node_id: node_id.to_string(),
-                expected: expected_input_type,
-                actual: input_data.get_type(),
-            });
-        }
-
-        let output = component
-            .execute(input_data)
-            .map_err(|err| DAGError::ExecutionError {
-                node_id: node_id.to_string(),
-                reason: err.to_string(),
-            })?;
-
-        if !Self::validate_data_type(&output, &component.output_type()) {
-            return Err(DAGError::TypeMismatch {
-                node_id: node_id.to_string(),
-                expected: component.output_type(),
-                actual: output.get_type(),
-            });
-        }
-
-        Ok((node_id.to_string(), output))
-    }
-
-    fn prepare_input_data(
-        node_id: &str,
-        deps: &[Edge],
-        results: &IndexMap<String, Data>,
-        initial_inputs: &HashMap<String, Data>,
-        expected_input_type: &DataType,
-    ) -> Result<Data, DAGError> {
-        println!("Preparing input data for node {}", node_id);
-        if deps.is_empty() {
-            Ok(initial_inputs.get(node_id).cloned().unwrap_or(Data::Null))
-        } else if deps.len() == 1 {
-            let dep = &deps[0];
-            let dep_output =
-                results
-                    .get(&dep.source)
-                    .cloned()
-                    .ok_or_else(|| DAGError::MissingDependency {
-                        node_id: node_id.to_string(),
-                        dependency_id: dep.source.clone(),
-                    })?;
-            if Self::validate_data_type(&dep_output, expected_input_type) {
-                Ok(dep_output)
-            } else {
-                Err(DAGError::TypeMismatch {
-                    node_id: node_id.to_string(),
-                    expected: expected_input_type.clone(),
-                    actual: dep_output.get_type(),
-                })
-            }
-        } else {
-            if let DataType::List(inner_type) = expected_input_type {
-                let aggregated_results: Vec<_> = deps
-                    .iter()
-                    .filter_map(|dep| {
-                        results.get(&dep.source).cloned().and_then(|data| {
-                            if Self::validate_data_type(&data, inner_type) {
-                                Some(data)
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                    .collect();
-
-                if aggregated_results.is_empty() {
-                    Err(DAGError::NoValidInputs {
-                        node_id: node_id.to_string(),
-                        expected: expected_input_type.clone(),
-                    })
-                } else {
-                    Ok(Data::List(aggregated_results))
-                }
-            } else {
-                let aggregated_results: Vec<_> = deps
-                    .iter()
-                    .filter_map(|dep| {
-                        results.get(&dep.source).cloned().and_then(|data| {
-                            if Self::validate_data_type(&data, expected_input_type) {
-                                Some(data)
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                    .collect();
-
-                if aggregated_results.is_empty() {
-                    Err(DAGError::NoValidInputs {
-                        node_id: node_id.to_string(),
-                        expected: expected_input_type.clone(),
-                    })
-                } else {
-                    Ok(Data::List(aggregated_results))
-                }
-            }
-        }
-    }
-
-    /// Replay a previous execution by request ID
-    pub async fn replay(&self, request_id: &str) -> Result<IndexMap<String, Data>, DAGError> {
-        if !self.config.enable_history {
-            return Err(DAGError::InvalidConfiguration(
-                "History replay is disabled".to_string()
-            ));
-        }
-
-        if let Some(cache) = &self.cache {
-            if let Some(historical_result) = cache.get_historical_result(request_id).await {
-                Ok(historical_result.node_results)
-            } else {
-                Err(DAGError::HistoricalResultNotFound {
-                    request_id: request_id.to_string(),
-                })
-            }
-        } else {
-            Err(DAGError::InvalidConfiguration(
-                "Cache not configured".to_string()
-            ))
         }
     }
 }

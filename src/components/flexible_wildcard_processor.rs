@@ -14,7 +14,15 @@ impl Component for FlexibleWildcardProcessor {
         println!("FlexibleWildcardProcessor input: {:?}", input);
         let json_input = match input {
             Data::Null => json!({ "type": "null" }),
-            Data::Json(value) => value,
+            Data::Json(value) => {
+                if let Some(num) = value.as_i64() {
+                    json!({ "type": "integer", "value": num })
+                } else if let Some(num) = value.as_f64() {
+                    json!({ "type": "float", "value": num })
+                } else {
+                    json!({ "type": "json", "value": value })
+                }
+            },
             Data::Integer(i) => json!({ "type": "integer", "value": i }),
             Data::Float(f) => json!({ "type": "float", "value": f }),
             Data::Text(t) => json!({ "type": "text", "value": t }),
@@ -28,9 +36,6 @@ impl Component for FlexibleWildcardProcessor {
                     })
                     .collect();
                 json!({ "type": "list", "values": json_list })
-            }
-            Data::OneConsumerChannel(_) => {
-                json!({ "type": "one_consumer_channel" })
             }
         };
 

@@ -35,7 +35,12 @@ impl Component for CrashTestDummy {
     }
 
     fn input_type(&self) -> DataType {
-        DataType::Null
+        DataType::Union(vec![
+            DataType::Null,
+            DataType::Text,
+            DataType::Json,
+            DataType::Integer,
+        ])
     }
 
     fn output_type(&self) -> DataType {

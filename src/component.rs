@@ -2,7 +2,6 @@ use std::{collections::HashMap, sync::Arc};
 
 use serde::{de::VariantAccess, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
-use tokio::sync::{oneshot, Mutex};
 use std::hash::{Hash, Hasher};
 
 use crate::dag::DAGError;
@@ -16,8 +15,6 @@ pub enum Data {
     Text(String),
     List(Vec<Data>),
     Json(Value),
-    /// A channel for single-consumer asynchronous results, wrapped in an `Arc<Mutex>` for safe sharing.
-    OneConsumerChannel(Arc<Mutex<Option<oneshot::Receiver<Data>>>>),
 }
 
 impl Hash for Data {
@@ -48,10 +45,6 @@ impl Hash for Data {
                 "Json".hash(state);
                 value.to_string().hash(state);
             }
-            Data::OneConsumerChannel(_) => {
-                // Treat channels as opaque and hash a constant value instead.
-                "OneConsumerChannel".hash(state);
-            }
         }
     }
 }
@@ -65,15 +58,6 @@ impl PartialEq for Data {
             (Data::Text(a), Data::Text(b)) => a == b,
             (Data::List(a), Data::List(b)) => a == b,
             (Data::Json(a), Data::Json(b)) => a == b,
-            // For channels, we'll consider them equal if they're both None
-            (Data::OneConsumerChannel(a), Data::OneConsumerChannel(b)) => {
-                // Compare if both are None
-                matches!(
-                    (a.try_lock().ok().as_ref().map(|g| g.is_none()),
-                     b.try_lock().ok().as_ref().map(|g| g.is_none())),
-                    (Some(true), Some(true))
-                )
-            },
             _ => false,
         }
     }
@@ -91,10 +75,6 @@ impl Serialize for Data {
             Data::Text(s) => serializer.serialize_newtype_variant("Data", 2, "Text", s),
             Data::List(list) => serializer.serialize_newtype_variant("Data", 3, "List", list),
             Data::Json(value) => serializer.serialize_newtype_variant("Data", 4, "Json", value),
-            Data::OneConsumerChannel(_) => {
-                // Serialize as an opaque placeholder
-                serializer.serialize_unit_variant("Data", 5, "OneConsumerChannel")
-            }
         }
     }
 }
@@ -113,7 +93,6 @@ impl<'de> Deserialize<'de> for Data {
             Text,
             List,
             Json,
-            OneConsumerChannel,
         }
 
         struct DataVisitor;
@@ -136,17 +115,13 @@ impl<'de> Deserialize<'de> for Data {
                     (Field::Text, variant) => variant.newtype_variant().map(Data::Text),
                     (Field::List, variant) => variant.newtype_variant().map(Data::List),
                     (Field::Json, variant) => variant.newtype_variant().map(Data::Json),
-                    (Field::OneConsumerChannel, _) => {
-                        // Deserialize as opaque placeholder
-                        Ok(Data::OneConsumerChannel(Arc::new(Mutex::new(None))))
-                    }
                 }
             }
         }
 
         deserializer.deserialize_enum(
             "Data",
-            &["Null", "Integer", "Float", "Text", "List", "Json", "OneConsumerChannel"],
+            &["Null", "Integer", "Float", "Text", "List", "Json"],
             DataVisitor,
         )
     }
@@ -163,8 +138,6 @@ pub enum DataType {
     List(Box<DataType>),
     Json,
     Union(Vec<DataType>),
-    /// Represents a single-consumer channel carrying a specific data type.
-    OneConsumerChannel(Box<DataType>),
 }
 
 impl DataType {
@@ -282,7 +255,6 @@ impl Data {
                 }
             }
             Data::Json(_) => DataType::Json,
-            Data::OneConsumerChannel(_) => DataType::List(Box::new(DataType::Integer)),
         }
     }
 }

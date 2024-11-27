@@ -8,7 +8,6 @@ use indexmap::IndexMap;
 use serde_json::json;
 use serde_json::Value;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Initialize and return a shared `ComponentRegistry`
 fn setup_registry() -> ComponentRegistry {
@@ -19,15 +18,100 @@ fn setup_registry() -> ComponentRegistry {
     registry.register::<flexible_wildcard_processor::FlexibleWildcardProcessor>(
         "FlexibleWildcardProcessor",
     );
-    registry.register::<long_running_task::LongRunningTask>("LongRunningTask");
-    registry.register::<channel_consumer::ChannelConsumer>("ChannelConsumer");
-    registry.register::<multi_channel_consumer::MultiChannelConsumer>("MultiChannelConsumer");
     registry.register::<crash_test_dummy::CrashTestDummy>("CrashTestDummy");
     registry
 }
 
 #[tokio::test]
-async fn test_dag_execution() {
+async fn test_optimal_makespan() {
+    let json_config = json!([
+        {
+            "id": "fast_1",
+            "component_type": "CrashTestDummy",
+            "config": {
+                "fail": false,
+                "sleep_duration_ms": 50
+            },
+            "depends_on": []
+        },
+        {
+            "id": "fast_2",
+            "component_type": "CrashTestDummy",
+            "config": {
+                "fail": false,
+                "sleep_duration_ms": 50
+            },
+            "depends_on": ["fast_1"]
+        },
+        {
+            "id": "slow_1",
+            "component_type": "CrashTestDummy",
+            "config": {
+                "fail": false,
+                "sleep_duration_ms": 100
+            },
+            "depends_on": []
+        },
+        {
+            "id": "final",
+            "component_type": "CrashTestDummy",
+            "config": {
+                "fail": false,
+                "sleep_duration_ms": 10
+            },
+            "depends_on": ["slow_1", "fast_2"]
+        }
+    ]);
+
+    let registry = setup_registry();
+    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_config = DAGConfig::cache_off();
+
+    let start = std::time::Instant::now();
+    let dag = DAG::from_ir(dag_ir, &registry, dag_config, None).expect("Valid DAG");
+    let results = dag.execute(None).await.expect("Execution success");
+    let duration = start.elapsed();
+    assert!(
+        duration.as_millis() < 125,
+        "Execution should be ideal makespan of 110ms (and slight buffer), got {}",
+        duration.as_millis()
+    );
+    assert_eq!(results.len(), 4);
+}
+
+#[tokio::test]
+async fn test_simple_seq_adds_up() {
+    let json_config = json!([
+        {
+            "id": "adder_1",
+            "component_type": "Adder",
+            "config": { "value": 5 },
+            "depends_on": [],
+            "inputs": 42
+        },
+        {
+            "id": "adder_2",
+            "component_type": "Adder",
+            "config": { "value": 10 },
+            "depends_on": ["adder_1"]
+        }
+    ]);
+
+    let registry = setup_registry();
+    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_config = DAGConfig::cache_off();
+    let dag = DAG::from_ir(dag_ir, &registry, dag_config, None).expect("Valid DAG");
+    let results = dag.execute(None).await.expect("Execution success");
+    assert_eq!(results.len(), 2);
+    assert_eq!(
+        results.get("adder_2").unwrap(),
+        &Data::Integer(57),
+        "adder_2 should have accumulated to 57"
+    );
+}
+
+#[tokio::test]
+async fn test_complex_dag_execution() {
     let json_config = json!([
         {
             "id": "string_counter_1",
@@ -81,25 +165,13 @@ async fn test_dag_execution() {
             "inputs": { "key1": "value1", "key2": 42 }
         },
         {
-            "id": "long_task",
-            "component_type": "LongRunningTask",
-            "config": {},
-            "depends_on": []
-        },
-        {
-            "id": "consumer",
-            "component_type": "ChannelConsumer",
-            "config": {},
-            "depends_on": ["long_task"]
-        },
-        {
             "id": "crash_dummy_1",
             "component_type": "CrashTestDummy",
             "config": {
                 "fail": false,
                 "sleep_duration_ms": 20
             },
-            "depends_on": ["consumer"]
+            "depends_on": ["wildcard_2"]
         }
     ]);
 
@@ -124,10 +196,7 @@ async fn test_dag_execution() {
             "key3": null
         })),
     );
-    expected_outputs.insert(
-        "long_task".to_string(),
-        Data::OneConsumerChannel(Arc::new(Mutex::new(None))),
-    );
+
     expected_outputs.insert(
         "wildcard_2".to_string(),
         Data::Json(json!({
@@ -141,7 +210,6 @@ async fn test_dag_execution() {
         "crash_dummy_1".to_string(),
         Data::Text("Success!".to_string()),
     );
-    expected_outputs.insert("consumer".to_string(), Data::Integer(42));
 
     match DAG::from_ir(dag_ir, &registry, dag_config, None) {
         Ok(dag) => match dag.execute(None).await {
@@ -157,19 +225,14 @@ async fn test_dag_execution() {
 
                 assert_eq!(
                     last_two,
-                    vec!["crash_dummy_1", "consumer"],
-                    "crash_dummy_1 should be last and consumer should be second-to-last"
+                    vec!["crash_dummy_1", "adder_3"],
+                    "crash_dummy_1 and adder_3 should be last"
                 );
 
                 for (key, actual_value) in &results_vec {
                     let expected_value =
                         expected_outputs.get(key).expect("Missing expected output");
-                    match (actual_value, expected_value) {
-                        (Data::OneConsumerChannel(_), Data::OneConsumerChannel(_)) => {
-                            continue;
-                        }
-                        _ => assert_eq!(actual_value, expected_value, "Mismatch for key {}", key),
-                    }
+                    assert_eq!(actual_value, expected_value, "Mismatch for key {}", key);
                 }
             }
             Err(err) => panic!("Execution error: {}", err),
@@ -219,6 +282,9 @@ async fn test_dag_execution_with_errors() {
 
 #[tokio::test]
 async fn test_dag_execution_with_timeout() {
+    let dag_config = DAGConfig::cache_off();
+    let timeout_ms = dag_config.per_node_timeout_ms;
+
     let json_config = json!([
         {
             "id": "adder_1",
@@ -232,7 +298,7 @@ async fn test_dag_execution_with_timeout() {
             "component_type": "CrashTestDummy",
             "config": {
                 "fail": false,
-                "sleep_duration_ms": 200
+                "sleep_duration_ms": timeout_ms.unwrap() + 100
             },
             "depends_on": ["adder_1"]
         }
@@ -241,54 +307,17 @@ async fn test_dag_execution_with_timeout() {
     let registry = setup_registry();
 
     let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
-    let dag_config = DAGConfig::cache_off();
 
     match DAG::from_ir(dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
             if let Err(err) = dag.execute(None).await {
                 println!("Execution error: {}", err);
-                assert!(err.to_string().contains("Execution timed out after 100ms"));
+                assert!(err.to_string().contains(&format!(
+                    "Node execution timed out after {}",
+                    timeout_ms.unwrap()
+                )));
             } else {
                 panic!("Execution should have failed");
-            }
-        }
-        Err(err) => panic!("DAG construction error: {}", err),
-    }
-}
-
-#[tokio::test]
-async fn test_dag_deferred_execution() {
-    let json_config = json!([
-        {
-            "id": "adder_1",
-            "component_type": "Adder",
-            "config": { "value": 5 },
-            "depends_on": [],
-            "inputs": 42
-        },
-        {
-            "id": "long_task",
-            "component_type": "LongRunningTask",
-            "config": {},
-            "depends_on": []
-        },
-        {
-            "id": "consumer",
-            "component_type": "ChannelConsumer",
-            "config": {},
-            "depends_on": ["long_task"]
-        }
-    ]);
-
-    let registry = setup_registry();
-
-    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
-    let dag_config = DAGConfig::cache_off();
-
-    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
-        Ok(dag) => {
-            if let Err(err) = dag.execute(None).await {
-                panic!("Execution error: {}", err);
             }
         }
         Err(err) => panic!("DAG construction error: {}", err),
@@ -431,51 +460,6 @@ async fn test_dag_duplicate_node_ids() {
 }
 
 #[tokio::test]
-async fn test_dag_parallel_execution() {
-    let json_config = json!([
-        {
-            "id": "long_task_1",
-            "component_type": "LongRunningTask",
-            "config": {},
-            "depends_on": []
-        },
-        {
-            "id": "long_task_2",
-            "component_type": "LongRunningTask",
-            "config": {},
-            "depends_on": []
-        },
-        {
-            "id": "consumer",
-            "component_type": "MultiChannelConsumer",
-            "config": {},
-            "depends_on": ["long_task_1", "long_task_2"]
-        }
-    ]);
-
-    let registry = setup_registry();
-    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
-    let dag_config = DAGConfig::cache_off();
-
-    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
-        Ok(dag) => {
-            let start = std::time::Instant::now();
-            let result = dag.execute(None).await;
-            let duration = start.elapsed();
-            println!("Result: {:?}", result);
-
-            assert!(result.is_ok(), "DAG execution failed");
-
-            assert!(
-                duration.as_millis() < 300,
-                "Tasks did not execute in parallel"
-            );
-        }
-        Err(err) => panic!("DAG construction error: {}", err),
-    }
-}
-
-#[tokio::test]
 async fn test_dag_invalid_json_config() {
     let invalid_configs = vec![
         json!([{
@@ -559,9 +543,12 @@ async fn test_dag_large_parallel_execution() {
 async fn test_dag_cleanup_on_failure() {
     let json_config = json!([
         {
-            "id": "long_task",
-            "component_type": "LongRunningTask",
-            "config": {},
+            "id": "crash_dummy_1",
+            "component_type": "CrashTestDummy",
+            "config": {
+                "fail": false,
+                "sleep_duration_ms": 50
+            },
             "depends_on": []
         },
         {
@@ -571,7 +558,7 @@ async fn test_dag_cleanup_on_failure() {
                 "fail": true,
                 "sleep_duration_ms": 50
             },
-            "depends_on": ["long_task"]
+            "depends_on": ["crash_dummy_1"]
         }
     ]);
 
@@ -655,80 +642,10 @@ async fn test_dag_with_caching() {
 }
 
 #[tokio::test]
-async fn test_dag_caching_with_channels() {
-    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
-    let history_file = temp_dir.path().join("dag_history.jsonl");
-    let cache = Arc::new(DAGCache::new(
-        Some(history_file.to_str().unwrap().to_string()),
-        10_000,
-    ));
-
-    let json_config = json!([
-        {
-            "id": "long_task",
-            "component_type": "LongRunningTask",
-            "config": {},
-            "depends_on": []
-        },
-        {
-            "id": "consumer",
-            "component_type": "ChannelConsumer",
-            "config": {},
-            "depends_on": ["long_task"]
-        }
-    ]);
-
-    let registry = setup_registry();
-    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
-    let dag_config = DAGConfig::default();
-
-    let dag =
-        DAG::from_ir(dag_ir, &registry, dag_config, Some(Arc::clone(&cache))).expect("Valid DAG");
-
-    let request_id = "channel-test-1".to_string();
-    let results = dag
-        .execute(Some(request_id.clone()))
-        .await
-        .expect("Execution success");
-
-    assert_eq!(results.get("consumer"), Some(&Data::Integer(42)));
-
-    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-    let cached_results = dag
-        .get_result_by_request_id(&request_id)
-        .expect("Cached results exist");
-    assert!(matches!(
-        cached_results.node_results.get("long_task"),
-        None | Some(Data::OneConsumerChannel(_))
-    ));
-
-    assert_eq!(
-        cached_results.node_results.get("consumer"),
-        Some(&Data::Integer(42))
-    );
-
-    let file_contents = tokio::fs::read_to_string(history_file)
-        .await
-        .expect("Failed to read history file");
-    println!("File contents: {}", file_contents);
-
-    let parsed: serde_json::Value =
-        serde_json::from_str(&file_contents).expect("File should contain valid JSON");
-
-    assert_eq!(parsed["node_results"]["long_task"], "OneConsumerChannel");
-
-    assert_eq!(parsed["node_results"]["consumer"]["Integer"], 42);
-}
-
-#[tokio::test]
 async fn test_dag_replay() {
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
     let history_file = temp_dir.path().join("replay_history.jsonl");
-    let cache = Arc::new(DAGCache::new(
-        Some(history_file),
-        10_000,
-    ));
+    let cache = Arc::new(DAGCache::new(Some(history_file), 10_000));
 
     let json_config = json!([
         {
@@ -748,10 +665,10 @@ async fn test_dag_replay() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
-    let dag_config = DAGConfig::default();  // This enables history
+    let dag_config = DAGConfig::default(); // This enables history
 
-    let dag = DAG::from_ir(dag_ir, &registry, dag_config, Some(Arc::clone(&cache)))
-        .expect("Valid DAG");
+    let dag =
+        DAG::from_ir(dag_ir, &registry, dag_config, Some(Arc::clone(&cache))).expect("Valid DAG");
 
     // First execution
     let request_id = "replay-test-1".to_string();
@@ -764,10 +681,7 @@ async fn test_dag_replay() {
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
     // Replay execution
-    let replayed_results = dag
-        .replay(&request_id)
-        .await
-        .expect("Replay success");
+    let replayed_results = dag.replay(&request_id).await.expect("Replay success");
 
     // Verify results match
     assert_eq!(original_results, replayed_results);

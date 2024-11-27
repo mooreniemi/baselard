@@ -20,7 +20,4 @@ Baselard is a library for building and executing directed acyclic graphs (DAGs) 
 - [x] Cache results of components
 - [x] Keep a request history of components for replay
 - [x] Automatically handle parallel nodes
-- [x] Communicate through channels across components
-- [x] Allow for ASAP (as soon as possible) and ALAP (as late as possible) scheduling of nodes
 - [ ] Streaming will not be supported: it doesn't match the scheduling mechanism
-- [ ] Multi-consumer `tokio::watch` channels will not be supported: require listeners prior to broadcaster
