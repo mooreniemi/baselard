@@ -4,7 +4,6 @@ use ascii_tree::Tree;
 
 use crate::dag::DAGIR;
 
-
 #[derive(Debug, Clone, Copy)]
 pub enum TreeView {
     /// top-down from roots
@@ -46,7 +45,7 @@ impl DAGIR {
                     .filter(|id| !all_targets.contains(id))
                     .collect();
 
-                self.build_subtree(&format!("DAG:{view:?}"), &start_nodes, &node_map, view)
+                Self::build_subtree(&format!("DAG:{view:?}"), &start_nodes, &node_map, view)
             }
             TreeView::Dependency => {
                 // Build a map of each node to its parents
@@ -74,23 +73,22 @@ impl DAGIR {
                     .filter(|id| !all_sources.contains(id))
                     .collect();
 
-                self.build_subtree(&format!("DAG:{view:?}"), &start_nodes, &node_map, view)
+                Self::build_subtree(&format!("DAG:{view:?}"), &start_nodes, &node_map, view)
             }
         }
     }
 
     #[allow(clippy::items_after_statements)]
     fn build_subtree<'a>(
-        &self,
         node_id: &str,
         start_nodes: &[&'a String],
         node_map: &HashMap<&'a String, Vec<&'a String>>,
         view: TreeView,
     ) -> Tree {
-        if node_id == &format!("DAG:{view:?}") {
+        if node_id == format!("DAG:{view:?}") {
             let children = start_nodes
                 .iter()
-                .map(|id| self.build_subtree(id, start_nodes, node_map, view))
+                .map(|id| Self::build_subtree(id, start_nodes, node_map, view))
                 .collect();
             return Tree::Node(node_id.to_string(), children);
         }
@@ -99,7 +97,7 @@ impl DAGIR {
             .get(&node_id.to_string())
             .unwrap_or(&vec![])
             .iter()
-            .map(|child_id| self.build_subtree(child_id, start_nodes, node_map, view))
+            .map(|child_id| Self::build_subtree(child_id, start_nodes, node_map, view))
             .collect::<Vec<Tree>>();
 
         Tree::Node(node_id.to_string(), children)
