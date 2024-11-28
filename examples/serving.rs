@@ -13,6 +13,7 @@ use baselard::{
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Instant;
+use baselard::cache::DAGCache;
 
 #[derive(Debug)]
 struct Multiplier {
@@ -59,14 +60,19 @@ impl Component for Multiplier {
     }
 }
 
+struct AppState {
+    registry: Arc<ComponentRegistry>,
+    cache: Arc<DAGCache>,
+}
+
 async fn execute_dag(
-    State(registry): State<Arc<ComponentRegistry>>,
+    State(state): State<Arc<AppState>>,
     Json(dag_config): Json<Value>,
 ) -> Response {
     let start = Instant::now();
 
     let result = match DAGIR::from_json(dag_config) {
-        Ok(ir) => match DAG::from_ir(ir, &registry, DAGConfig::default(), None) {
+        Ok(ir) => match DAG::from_ir(ir, &state.registry, DAGConfig::default(), Some(Arc::clone(&state.cache))) {
             Ok(dag) => dag.execute(None).await,
             Err(e) => Err(DAGError::InvalidConfiguration(e.to_string())),
         },
@@ -94,11 +100,20 @@ async fn main() {
     let mut registry = ComponentRegistry::new();
     registry.register::<Adder>("Adder");
     registry.register::<Multiplier>("Multiplier");
-    let shared_registry = Arc::new(registry);
+
+    let cache = DAGCache::new(
+        Some("/tmp/axum_dag_history.jsonl"),
+        10_000,
+    );
+
+    let state = Arc::new(AppState {
+        registry: Arc::new(registry),
+        cache: Arc::new(cache),
+    });
 
     let app = Router::new()
         .route("/execute", post(execute_dag))
-        .with_state(shared_registry);
+        .with_state(state);
 
     println!("Server running on http://localhost:3000");
 

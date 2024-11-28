@@ -420,6 +420,18 @@ impl DAG {
             request_id
         );
 
+        if self.config.enable_memory_cache() {
+            if let Some(cache) = &self.cache {
+                if let Some(cached_result) = cache.get_cached_result(self.ir_hash, &self.initial_inputs) {
+                    println!(
+                        "[{:.2}s] Cache hit! Returning cached result",
+                        start_time.elapsed().as_secs_f32()
+                    );
+                    return Ok(cached_result.node_results);
+                }
+            }
+        }
+
         let sorted_nodes = self.compute_execution_order(start_time.elapsed().as_secs_f32())?;
 
         let (notifiers, shared_results) =
