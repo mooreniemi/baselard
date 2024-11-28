@@ -23,7 +23,7 @@ impl Component for Multiplier {
             Data::Integer(n) => n as f64,
             Data::List(list) => list
                 .iter()
-                .filter_map(|v| v.as_integer())
+                .filter_map(baselard::component::Data::as_integer)
                 .map(|n| n as f64)
                 .sum(),
             _ => {
@@ -129,7 +129,7 @@ async fn test_error_handling_config() {
 
     let result = DAGIR::from_json(invalid_config)
         .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None));
-    assert!(matches!(result, Err(_)), "Invalid configuration should return an error");
+    assert!(result.is_err(), "Invalid configuration should return an error");
 }
 
 #[tokio::test]
@@ -144,7 +144,7 @@ async fn test_error_handling_input() {
 
     let result = DAGIR::from_json(invalid_input)
         .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None));
-    assert!(matches!(result, Err(_)), "Invalid input should return an error");
+    assert!(result.is_err(), "Invalid input should return an error");
 }
 
 #[tokio::test]

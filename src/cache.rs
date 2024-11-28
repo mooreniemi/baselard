@@ -56,14 +56,14 @@ impl DAGCache {
 
     fn calculate_inputs_hash(map: &HashMap<String, Data>) -> u64 {
         let mut hasher = DefaultHasher::new();
-        for (key, value) in map.iter() {
+        for (key, value) in map {
             key.hash(&mut hasher);
             value.hash(&mut hasher);
         }
         hasher.finish()
     }
 
-    pub async fn store_result(
+    pub fn store_result(
         &self,
         ir_hash: u64,
         inputs: &HashMap<String, Data>,
@@ -112,6 +112,7 @@ impl DAGCache {
         }
     }
 
+    #[must_use]
     pub fn get_cached_result(
         &self,
         ir_hash: u64,
@@ -121,6 +122,7 @@ impl DAGCache {
         self.request_cache.get(&cache_key)
     }
 
+    #[must_use]
     pub fn get_result_by_request_id(&self, request_id: &str) -> Option<DAGResult> {
         self.history_cache.get(request_id)
     }
@@ -132,9 +134,8 @@ impl DAGCache {
 
         let history_file = self.history_file.as_ref()?;
 
-        let file = match tokio::fs::File::open(history_file).await {
-            Ok(file) => file,
-            Err(_) => return None,
+        let Ok(file) = tokio::fs::File::open(history_file).await else {
+            return None;
         };
 
         let reader = tokio::io::BufReader::new(file);
@@ -153,6 +154,7 @@ impl DAGCache {
         None
     }
 
+    #[must_use]
     pub fn get_cached_node_result(
         &self,
         ir_hash: u64,

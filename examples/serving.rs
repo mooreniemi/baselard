@@ -1,18 +1,20 @@
 use axum::{
     extract::{Json, State},
+    response::{IntoResponse, Response},
     routing::post,
     Router,
-    response::{IntoResponse, Response},
 };
+use baselard::cache::DAGCache;
+use baselard::dag_visualizer::TreeView;
 use baselard::{
     component::{Component, ComponentRegistry, Data, DataType},
     components::{adder::Adder, payload_transformer::PayloadTransformer},
     dag::{DAGConfig, DAGError, DAG, DAGIR},
 };
 use serde_json::{json, Value};
+use tracing::warn;
 use std::sync::Arc;
 use std::time::Instant;
-use baselard::cache::DAGCache;
 
 #[derive(Debug)]
 struct Multiplier {
@@ -31,9 +33,24 @@ impl Component for Multiplier {
             Data::Integer(n) => n as f64,
             Data::List(list) => list
                 .iter()
-                .filter_map(|v| v.as_integer())
+                .filter_map(baselard::component::Data::as_integer)
                 .map(|n| n as f64)
                 .sum(),
+            Data::Json(value) => {
+                println!("[Experimental] Multiplier received JSON value: {value:?}");
+                if let Some(num) = value.as_i64() {
+                    num as f64
+                } else if let Some(num) = value.as_f64() {
+                    num
+                } else if let Some(list) = value.as_array() {
+                    list.iter().filter_map(serde_json::Value::as_f64).sum()
+                } else if let Some(text) = value.as_str() {
+                    text.parse::<f64>().unwrap_or(0.0)
+                } else {
+                    warn!("Multiplier received unparseable JSON value: {value:?}");
+                    0.0
+                }
+            },
             _ => {
                 return Err(DAGError::TypeSystemFailure {
                     component: "Multiplier".to_string(),
@@ -51,6 +68,7 @@ impl Component for Multiplier {
             DataType::Null,
             DataType::Integer,
             DataType::List(Box::new(DataType::Integer)),
+            DataType::Json, // This allows for payload transformations
         ])
     }
 
@@ -66,15 +84,39 @@ struct AppState {
 
 async fn execute_dag(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Json(dag_config): Json<Value>,
 ) -> Response {
     let start = Instant::now();
 
+    let use_cache = !headers
+        .get(axum::http::header::CACHE_CONTROL)
+        .and_then(|h| h.to_str().ok())
+        .is_some_and(|s| s.to_lowercase().contains("no-cache"));
+
     let result = match DAGIR::from_json(dag_config) {
-        Ok(ir) => match DAG::from_ir(ir, &state.registry, DAGConfig::default(), Some(Arc::clone(&state.cache))) {
-            Ok(dag) => dag.execute(None).await,
-            Err(e) => Err(DAGError::InvalidConfiguration(e.to_string())),
-        },
+        Ok(ir) => {
+            let tree = ir.build_tree(TreeView::Dependency);
+            let mut output = String::new();
+            let _ = ascii_tree::write_tree(&mut output, &tree);
+            println!("{output}");
+
+            let mut dag_config = DAGConfig::default();
+            if !use_cache {
+                println!("Disabling memory cache");
+                dag_config.enable_memory_cache = false;
+            }
+
+            match DAG::from_ir(
+                ir,
+                &state.registry,
+                dag_config,
+                Some(Arc::clone(&state.cache)),
+            ) {
+                Ok(dag) => dag.execute(None).await,
+                Err(e) => Err(DAGError::InvalidConfiguration(e.to_string())),
+            }
+        }
         Err(e) => Err(DAGError::InvalidConfiguration(e)),
     };
 
@@ -84,13 +126,17 @@ async fn execute_dag(
         Ok(outputs) => Json(json!({
             "success": true,
             "results": outputs,
-            "took_ms": elapsed
-        })).into_response(),
+            "took_ms": elapsed,
+            "cache_enabled": use_cache
+        }))
+        .into_response(),
         Err(err) => Json(json!({
             "success": false,
             "error": format!("{:?}", err),
-            "took_ms": elapsed
-        })).into_response(),
+            "took_ms": elapsed,
+            "cache_enabled": use_cache
+        }))
+        .into_response(),
     }
 }
 
@@ -101,10 +147,7 @@ async fn main() {
     registry.register::<Multiplier>("Multiplier");
     registry.register::<PayloadTransformer>("PayloadTransformer");
 
-    let cache = DAGCache::new(
-        Some("/tmp/axum_dag_history.jsonl"),
-        10_000,
-    );
+    let cache = DAGCache::new(Some("/tmp/axum_dag_history.jsonl"), 10_000);
 
     let state = Arc::new(AppState {
         registry: Arc::new(registry),
@@ -121,7 +164,5 @@ async fn main() {
         .await
         .unwrap();
 
-    axum::serve(listener, app)
-        .await
-        .unwrap();
+    axum::serve(listener, app).await.unwrap();
 }

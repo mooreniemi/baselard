@@ -79,13 +79,12 @@ fn execute_component_blocking(
 
     let elapsed = start_time.elapsed().as_secs_f32();
     println!(
-        "[{:.2}s] Executing component: {} with inputs: {:?} (takes {}s)",
-        elapsed, name, received_outputs, execution_time
+        "[{elapsed:.2}s] Executing component: {name} with inputs: {received_outputs:?} (takes {execution_time}s)"
     );
 
     std::thread::sleep(std::time::Duration::from_secs(execution_time));
 
-    let output = format!("Output of {}", name);
+    let output = format!("Output of {name}");
     outputs.lock().unwrap().insert(name.clone(), output);
 
     if let Some(sender) = notifiers.lock().unwrap().get(&name) {
@@ -127,8 +126,7 @@ async fn main() {
     let sorted_components = topological_sort(&components);
     let elapsed = start_time.elapsed().as_secs_f32();
     println!(
-        "[{:.2}s] Topological sort: {:?}",
-        elapsed, sorted_components
+        "[{elapsed:.2}s] Topological sort: {sorted_components:?}"
     );
 
     let notifiers: Arc<Mutex<HashMap<String, watch::Sender<()>>>> =
@@ -152,7 +150,6 @@ async fn main() {
         let execution_time = component.execution_time;
         let notifiers = Arc::clone(&notifiers);
         let outputs = Arc::clone(&outputs);
-        let start_time = start_time.clone();
 
         let handle = task::spawn_blocking(move || {
             execute_component_blocking(
@@ -163,7 +160,7 @@ async fn main() {
                 notifiers,
                 receivers,
                 outputs,
-            )
+            );
         });
 
         handles.push(handle);

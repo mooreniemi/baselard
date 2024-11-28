@@ -110,6 +110,7 @@ async fn test_simple_seq_adds_up() {
     );
 }
 
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn test_complex_dag_execution() {
     let json_config = json!([
@@ -232,12 +233,12 @@ async fn test_complex_dag_execution() {
                 for (key, actual_value) in &results_vec {
                     let expected_value =
                         expected_outputs.get(key).expect("Missing expected output");
-                    assert_eq!(actual_value, expected_value, "Mismatch for key {}", key);
+                    assert_eq!(actual_value, expected_value, "Mismatch for key {key}");
                 }
             }
-            Err(err) => panic!("Execution error: {}", err),
+            Err(err) => panic!("Execution error: {err}"),
         },
-        Err(err) => panic!("DAG construction error: {}", err),
+        Err(err) => panic!("DAG construction error: {err}"),
     }
 }
 
@@ -270,13 +271,13 @@ async fn test_dag_execution_with_errors() {
     match DAG::from_ir(dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
             if let Err(err) = dag.execute(None).await {
-                println!("Execution error: {}", err);
+                println!("Execution error: {err}");
                 assert!(err.to_string().contains("Simulated failure as configured"));
             } else {
                 panic!("Execution should have failed");
             }
         }
-        Err(err) => panic!("DAG construction error: {}", err),
+        Err(err) => panic!("DAG construction error: {err}"),
     }
 }
 
@@ -311,7 +312,7 @@ async fn test_dag_execution_with_timeout() {
     match DAG::from_ir(dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
             if let Err(err) = dag.execute(None).await {
-                println!("Execution error: {}", err);
+                println!("Execution error: {err}");
                 assert!(err.to_string().contains(&format!(
                     "Node execution timed out after {}",
                     timeout_ms.unwrap()
@@ -320,7 +321,7 @@ async fn test_dag_execution_with_timeout() {
                 panic!("Execution should have failed");
             }
         }
-        Err(err) => panic!("DAG construction error: {}", err),
+        Err(err) => panic!("DAG construction error: {err}"),
     }
 }
 
@@ -358,16 +359,14 @@ async fn test_dag_cycle_detection() {
             Err(err) => {
                 assert!(
                     err.to_string().contains("Cycle"),
-                    "Error should mention cycle, got: {}",
-                    err
+                    "Error should mention cycle, got: {err}"
                 );
             }
         },
         Err(err) => {
             assert!(
                 err.to_string().contains("Cycle"),
-                "Error should mention cycle, got: {}",
-                err
+                "Error should mention cycle, got: {err}"
             );
         }
     }
@@ -389,7 +388,7 @@ async fn test_dag_empty_graph() {
                 "Empty DAG should return empty results"
             );
         }
-        Err(err) => panic!("DAG construction error: {}", err),
+        Err(err) => panic!("DAG construction error: {err}"),
     }
 }
 
@@ -406,9 +405,7 @@ async fn test_dag_invalid_component_type() {
     let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
-    if let Ok(_) = DAG::from_ir(dag_ir, &registry, dag_config, None) {
-        panic!("Expected error for invalid component type");
-    }
+    assert!(DAG::from_ir(dag_ir, &registry, dag_config, None).is_err(), "Expected error for invalid component type");
 }
 
 #[tokio::test]
@@ -427,9 +424,7 @@ async fn test_dag_invalid_dependency() {
     let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
-    if let Ok(_) = DAG::from_ir(dag_ir, &registry, dag_config, None) {
-        panic!("Expected error for invalid dependency");
-    }
+    assert!(DAG::from_ir(dag_ir, &registry, dag_config, None).is_err(), "Expected error for invalid dependency");
 }
 
 #[tokio::test]
@@ -454,9 +449,7 @@ async fn test_dag_duplicate_node_ids() {
     let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
-    if let Ok(_) = DAG::from_ir(dag_ir, &registry, dag_config, None) {
-        panic!("Expected error for duplicate node IDs");
-    }
+    assert!(DAG::from_ir(dag_ir, &registry, dag_config, None).is_err(), "Expected error for duplicate node IDs");
 }
 
 #[tokio::test]
@@ -482,7 +475,7 @@ async fn test_dag_invalid_json_config() {
         match DAGIR::from_json(config) {
             Ok(_) => panic!("Expected JSON parsing to fail"),
             Err(err) => {
-                println!("Got expected error: {}", err);
+                println!("Got expected error: {err}");
                 assert!(!err.is_empty(), "Error message should not be empty");
             }
         }
@@ -506,7 +499,7 @@ async fn test_dag_large_parallel_execution() {
 
     let mut depends_on = Vec::new();
     for i in 0..num_parallel_nodes {
-        depends_on.push(format!("adder_{}", i));
+        depends_on.push(format!("adder_{i}"));
     }
 
     config_array.push(json!({
@@ -535,7 +528,7 @@ async fn test_dag_large_parallel_execution() {
                 duration.as_millis()
             );
         }
-        Err(err) => panic!("DAG construction error: {}", err),
+        Err(err) => panic!("DAG construction error: {err}"),
     }
 }
 
@@ -571,7 +564,7 @@ async fn test_dag_cleanup_on_failure() {
             let result = dag.execute(None).await;
             assert!(result.is_err(), "Expected execution to fail");
         }
-        Err(err) => panic!("DAG construction error: {}", err),
+        Err(err) => panic!("DAG construction error: {err}"),
     }
 }
 
@@ -629,7 +622,7 @@ async fn test_dag_with_caching() {
     let file_contents = tokio::fs::read_to_string(history_file)
         .await
         .expect("Failed to read history file");
-    println!("File contents: {}", file_contents);
+    println!("File contents: {file_contents}");
 
     assert!(file_contents.contains("\"request_id\":\"test-run-1\""));
 

@@ -51,5 +51,5 @@ To try a complex transform (if you have `cargo --example serving` running),
 ```
 curl -X POST http://localhost:3000/execute \
   -H "Content-Type: application/json" \
-  -d @tests/resources/transform.json
+  -d @tests/resources/complex_transform.json
 ```
