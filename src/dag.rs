@@ -310,7 +310,7 @@ impl Default for DAGConfig {
 }
 
 pub struct DAG {
-    nodes: Arc<HashMap<String, Box<dyn Component>>>,
+    nodes: Arc<HashMap<String, Arc<dyn Component>>>,
     edges: Arc<HashMap<String, Vec<Edge>>>,
     initial_inputs: Arc<HashMap<String, Data>>,
     config: DAGConfig,
@@ -342,10 +342,9 @@ impl DAG {
         println!("Registry: {:?}", registry);
         println!("Creating components");
         for node in ir.nodes {
-            let factory = registry
-                .get(&node.component_type)
-                .ok_or_else(|| format!("Unknown component type: {}", node.component_type))?;
-            let component = factory(node.config);
+            let component = registry
+                .get_configured(&node.component_type, node.config.clone())
+                .map_err(|e| format!("Failed to get component for node {}: {}", node.id, e))?;
 
             if let Some(input) = &node.inputs {
                 if !Self::validate_data_type(input, &component.input_type()) {

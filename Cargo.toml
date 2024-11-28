@@ -26,6 +26,7 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 indexmap = { version = "2", features = ["serde"] }
 moka = { version = "0.12", features = ["sync"] }
+jq-rs = { version = "0.4" }
 
 # For testing in integration tests
 tempfile = "3"

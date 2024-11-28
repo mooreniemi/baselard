@@ -5,10 +5,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use baselard::{
-    component::{Component, Data, DataType},
-    component::ComponentRegistry,
-    components::adder::Adder,
-    dag::{DAGConfig, DAG, DAGIR, DAGError},
+    component::{Component, ComponentRegistry, Data, DataType},
+    components::{adder::Adder, payload_transformer::PayloadTransformer},
+    dag::{DAGConfig, DAGError, DAG, DAGIR},
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -85,12 +84,12 @@ async fn execute_dag(
         Ok(outputs) => Json(json!({
             "success": true,
             "results": outputs,
-            "took": elapsed
+            "took_ms": elapsed
         })).into_response(),
         Err(err) => Json(json!({
             "success": false,
             "error": format!("{:?}", err),
-            "took": elapsed
+            "took_ms": elapsed
         })).into_response(),
     }
 }
@@ -100,6 +99,7 @@ async fn main() {
     let mut registry = ComponentRegistry::new();
     registry.register::<Adder>("Adder");
     registry.register::<Multiplier>("Multiplier");
+    registry.register::<PayloadTransformer>("PayloadTransformer");
 
     let cache = DAGCache::new(
         Some("/tmp/axum_dag_history.jsonl"),

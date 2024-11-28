@@ -1,0 +1,29 @@
+[
+  {
+    "id": "transform1",
+    "component_type": "PayloadTransformer",
+    "config": {
+      "transformation_expression": "{
+        original_items: .items,
+        item_count: (.items | length),
+        total_price: (.items | map(.price) | add),
+        expensive_items: (.items | map(select(.price > 50)) | map(.name)),
+        categories: (.items | group_by(.category) | map({
+          category: .[0].category,
+          count: length,
+          avg_price: (map(.price) | add / length)
+        }))
+      }"
+    },
+    "inputs": {
+      "items": [
+        {"name": "Laptop", "price": 999.99, "category": "Electronics"},
+        {"name": "Coffee Mug", "price": 12.99, "category": "Kitchen"},
+        {"name": "Headphones", "price": 199.99, "category": "Electronics"},
+        {"name": "Notebook", "price": 4.99, "category": "Office"},
+        {"name": "Monitor", "price": 299.99, "category": "Electronics"},
+        {"name": "Water Bottle", "price": 24.99, "category": "Kitchen"}
+      ]
+    }
+  }
+]

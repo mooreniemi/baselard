@@ -1,8 +1,8 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, hash::{Hash, Hasher}, hash::DefaultHasher};
+use std::sync::RwLock;
 
 use serde::{de::VariantAccess, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
-use std::hash::{Hash, Hasher};
 
 use crate::dag::DAGError;
 
@@ -277,28 +277,80 @@ pub trait Component: Send + Sync + 'static {
     }
 }
 
-/// A configure on demand registry of components.
-/// For performance might be better to cache configured components.
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+struct ComponentKey {
+    component_type: String,
+    config_hash: u64,
+}
+
 pub struct ComponentRegistry {
-    components: HashMap<String, Arc<dyn Fn(Value) -> Box<dyn Component> + Send + Sync>>,
+    components: HashMap<String, Arc<dyn Fn(Value) -> Arc<dyn Component> + Send + Sync>>,
+    configured_component_cache: Arc<RwLock<HashMap<ComponentKey, Arc<dyn Component>>>>,
 }
 
 impl ComponentRegistry {
     pub fn new() -> Self {
         Self {
             components: HashMap::new(),
+            configured_component_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
+    /// Registers a new component type with the registry.
     pub fn register<C: Component + 'static>(&mut self, name: &str) {
         self.components.insert(
             name.to_string(),
-            Arc::new(|config| Box::new(C::configure(config)) as Box<dyn Component>),
+            Arc::new(|config| Arc::new(C::configure(config)) as Arc<dyn Component>),
         );
     }
 
-    pub fn get(&self, name: &str) -> Option<&Arc<dyn Fn(Value) -> Box<dyn Component> + Send + Sync>> {
+    /// Gets a configured component instance, using cache if available.
+    /// This is the preferred method for getting components during DAG execution.
+    ///
+    /// # Errors
+    /// Returns `ComponentError::NotRegistered` if the component type is not registered.
+    /// Returns `ComponentError::CacheError` if there's an error accessing the cache.
+    pub fn get_configured(&self, name: &str, config: Value) -> Result<Arc<dyn Component>, ComponentError> {
+        let config_hash = Self::calculate_config_hash(&config);
+        let key = ComponentKey {
+            component_type: name.to_string(),
+            config_hash,
+        };
+
+        if let Ok(cache) = self.configured_component_cache.read() {
+            if let Some(component) = cache.get(&key) {
+                println!("Configured component cache hit for {}", name);
+                return Ok(Arc::clone(component));
+            }
+        } else {
+            return Err(ComponentError::CacheError("Failed to acquire read lock".to_string()));
+        }
+
+        let factory = self.components
+            .get(name)
+            .ok_or_else(|| ComponentError::NotRegistered(name.to_string()))?;
+
+        println!("Configured component cache miss for {}", name);
+        let component = factory(config.clone());
+        if let Ok(mut cache) = self.configured_component_cache.write() {
+            cache.insert(key, Arc::clone(&component));
+            Ok(component)
+        } else {
+            Err(ComponentError::CacheError("Failed to acquire write lock".to_string()))
+        }
+    }
+
+    /// Gets the raw component factory. This is primarily for internal use
+    /// or advanced cases where you need to manage component configuration yourself.
+    pub fn get(&self, name: &str) -> Option<&Arc<dyn Fn(Value) -> Arc<dyn Component> + Send + Sync>> {
         self.components.get(name)
+    }
+
+    // Add this helper method
+    fn calculate_config_hash(config: &Value) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        config.to_string().hash(&mut hasher);
+        hasher.finish()
     }
 }
 
@@ -307,5 +359,20 @@ impl std::fmt::Debug for ComponentRegistry {
         f.debug_struct("ComponentRegistry")
             .field("registered_components", &self.components.keys().collect::<Vec<_>>())
             .finish()
+    }
+}
+
+#[derive(Debug)]
+pub enum ComponentError {
+    NotRegistered(String),
+    CacheError(String),
+}
+
+impl std::fmt::Display for ComponentError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ComponentError::NotRegistered(name) => write!(f, "Component type '{}' not registered", name),
+            ComponentError::CacheError(msg) => write!(f, "Component cache error: {}", msg),
+        }
     }
 }
