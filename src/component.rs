@@ -280,7 +280,7 @@ pub trait Component: Send + Sync + 'static {
 /// A configure on demand registry of components.
 /// For performance might be better to cache configured components.
 pub struct ComponentRegistry {
-    components: HashMap<String, Arc<dyn Fn(Value) -> Box<dyn Component>>>,
+    components: HashMap<String, Arc<dyn Fn(Value) -> Box<dyn Component> + Send + Sync>>,
 }
 
 impl ComponentRegistry {
@@ -297,7 +297,7 @@ impl ComponentRegistry {
         );
     }
 
-    pub fn get(&self, name: &str) -> Option<&Arc<dyn Fn(Value) -> Box<dyn Component>>> {
+    pub fn get(&self, name: &str) -> Option<&Arc<dyn Fn(Value) -> Box<dyn Component> + Send + Sync>> {
         self.components.get(name)
     }
 }
