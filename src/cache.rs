@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use moka::sync::Cache;
+use moka::sync::Cache as MokaCache;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -29,20 +29,20 @@ struct DAGInputHash {
 /// We cache results in two ways:
 /// - By DAG inputs and configuration, for memoized behavior
 /// - By request ID (in memory and backed on a file) for specific replay
-pub struct DAGCache {
+pub struct Cache {
     /// Cache keyed by DAG inputs configuration
-    request_cache: Arc<Cache<DAGInputHash, DAGResult>>,
+    request_cache: Arc<MokaCache<DAGInputHash, DAGResult>>,
     /// Cache keyed by request ID for testing/lookup
-    history_cache: Arc<Cache<RequestId, DAGResult>>,
+    history_cache: Arc<MokaCache<RequestId, DAGResult>>,
     /// History file path
     history_file: Option<PathBuf>,
 }
 
-impl DAGCache {
+impl Cache {
     pub fn new(history_file: Option<impl Into<PathBuf>>, max_capacity: u64) -> Self {
         Self {
-            request_cache: Arc::new(Cache::new(max_capacity)),
-            history_cache: Arc::new(Cache::new(max_capacity)),
+            request_cache: Arc::new(MokaCache::new(max_capacity)),
+            history_cache: Arc::new(MokaCache::new(max_capacity)),
             history_file: history_file.map(Into::into),
         }
     }
@@ -105,7 +105,7 @@ impl DAGCache {
                     .await
                 {
                     if let Ok(json) = serde_json::to_string(&history_result) {
-                        let _ = file.write_all(format!("{}\n", json).as_bytes()).await;
+                        let _ = file.write_all(format!("{json}\n").as_bytes()).await;
                     }
                 }
             });

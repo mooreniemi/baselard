@@ -1,11 +1,11 @@
-use baselard::component::ComponentRegistry;
 use baselard::component::Data;
+use baselard::component::Registry;
 use baselard::components::payload_transformer::PayloadTransformer;
 use baselard::dag::{DAGConfig, DAG, DAGIR};
 use serde_json::json;
 
-fn setup_test_registry() -> ComponentRegistry {
-    let mut registry = ComponentRegistry::new();
+fn setup_test_registry() -> Registry {
+    let mut registry = Registry::new();
     registry.register::<PayloadTransformer>("PayloadTransformer");
     registry
 }
@@ -25,7 +25,7 @@ async fn test_basic_transformation() {
         }
     }]);
 
-    let dag = DAGIR::from_json(json_config)
+    let dag = DAGIR::from_json(&json_config)
         .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None))
         .expect("Valid DAG");
 
@@ -49,10 +49,13 @@ async fn test_invalid_jq_expression() {
         "inputs": {"test": "data"}
     }]);
 
-    let result = DAGIR::from_json(json_config)
+    let result = DAGIR::from_json(&json_config)
         .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None));
-    
-    assert!(result.is_err(), "Invalid JQ expression should fail at configuration");
+
+    assert!(
+        result.is_err(),
+        "Invalid JQ expression should fail at configuration"
+    );
     assert!(
         matches!(
             result,
@@ -87,17 +90,17 @@ async fn test_chained_transformations() {
         }
     ]);
 
-    let dag = DAGIR::from_json(json_config)
+    let dag = DAGIR::from_json(&json_config)
         .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None))
         .expect("Valid DAG");
 
     let results = dag.execute(None).await.expect("Execution success");
-    
+
     assert_eq!(
         results.get("transform1"),
         Some(&Data::Json(json!({"message": "Hello", "count": 1})))
     );
-    
+
     assert_eq!(
         results.get("transform2"),
         Some(&Data::Json(json!("Hello World!")))
@@ -116,7 +119,7 @@ async fn test_non_json_input() {
         "inputs": 42  // Integer instead of JSON
     }]);
 
-    let result = DAGIR::from_json(json_config)
+    let result = DAGIR::from_json(&json_config)
         .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None));
 
     assert!(result.is_err(), "Non-JSON input should fail DAG validation");
@@ -139,7 +142,7 @@ async fn test_default_identity_transform() {
         "inputs": {"test": "data"}
     }]);
 
-    let dag = DAGIR::from_json(json_config)
+    let dag = DAGIR::from_json(&json_config)
         .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None))
         .expect("Valid DAG");
 

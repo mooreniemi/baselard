@@ -102,6 +102,7 @@ impl Component for PayloadTransformer {
                     })
                     .map_err(|err| DAGError::ExecutionError {
                         node_id: "unknown".to_string(),
+
                         reason: format!("Failed to execute jq: {err}"),
                     })?;
 

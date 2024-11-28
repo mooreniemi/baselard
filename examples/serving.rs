@@ -4,10 +4,12 @@ use axum::{
     routing::post,
     Router,
 };
-use baselard::cache::DAGCache;
+
+use baselard::cache::Cache;
 use baselard::dag_visualizer::TreeView;
+
 use baselard::{
-    component::{Component, ComponentRegistry, Data, DataType},
+    component::{Component, Data, DataType, Registry},
     components::{adder::Adder, payload_transformer::PayloadTransformer},
     dag::{DAGConfig, DAGError, DAG, DAGIR},
 };
@@ -27,14 +29,15 @@ impl Component for Multiplier {
         Self { value: multiplier }
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     fn execute(&self, input: Data) -> Result<Data, DAGError> {
         let input_value = match input {
             Data::Null => 0.0,
-            Data::Integer(n) => n as f64,
+            Data::Integer(n) => f64::from(n),
             Data::List(list) => list
                 .iter()
                 .filter_map(baselard::component::Data::as_integer)
-                .map(|n| n as f64)
+                .map(f64::from)
                 .sum(),
             Data::Json(value) => {
                 println!("[Experimental] Multiplier received JSON value: {value:?}");
@@ -78,8 +81,8 @@ impl Component for Multiplier {
 }
 
 struct AppState {
-    registry: Arc<ComponentRegistry>,
-    cache: Arc<DAGCache>,
+    registry: Arc<Registry>,
+    cache: Arc<Cache>,
 }
 
 async fn execute_dag(
@@ -142,12 +145,12 @@ async fn execute_dag(
 
 #[tokio::main]
 async fn main() {
-    let mut registry = ComponentRegistry::new();
+    let mut registry = Registry::new();
     registry.register::<Adder>("Adder");
     registry.register::<Multiplier>("Multiplier");
     registry.register::<PayloadTransformer>("PayloadTransformer");
 
-    let cache = DAGCache::new(Some("/tmp/axum_dag_history.jsonl"), 10_000);
+    let cache = Cache::new(Some("/tmp/axum_dag_history.jsonl"), 10_000);
 
     let state = Arc::new(AppState {
         registry: Arc::new(registry),

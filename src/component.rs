@@ -269,14 +269,16 @@ impl Data {
     }
 }
 
-pub type ComponentResult = Result<Data, DAGError>;
-
 pub trait Component: Send + Sync + 'static {
     fn configure(config: Value) -> Self
     where
         Self: Sized;
 
-    fn execute(&self, input: Data) -> ComponentResult;
+    /// Execute the component with the given input data
+    ///
+    /// # Errors
+    /// Returns a `DAGError` if the component execution fails
+    fn execute(&self, input: Data) -> Result<Data, DAGError>;
 
     fn input_type(&self) -> DataType;
 
@@ -293,18 +295,22 @@ struct ComponentKey {
     config_hash: u64,
 }
 
-pub struct ComponentRegistry {
-    components: HashMap<String, Arc<dyn Fn(Value) -> Arc<dyn Component> + Send + Sync>>,
+type RegisteredComponent = Arc<dyn Fn(Value) -> Arc<dyn Component> + Send + Sync>;
+
+pub struct Registry {
+    components: HashMap<String, RegisteredComponent>,
     configured_component_cache: Arc<RwLock<HashMap<ComponentKey, Arc<dyn Component>>>>,
 }
 
-impl Default for ComponentRegistry {
+
+impl Default for Registry {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ComponentRegistry {
+impl Registry {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             components: HashMap::new(),
@@ -326,12 +332,8 @@ impl ComponentRegistry {
     /// # Errors
     /// Returns `ComponentError::NotRegistered` if the component type is not registered.
     /// Returns `ComponentError::CacheError` if there's an error accessing the cache.
-    pub fn get_configured(
-        &self,
-        name: &str,
-        config: Value,
-    ) -> Result<Arc<dyn Component>, ComponentError> {
-        let config_hash = Self::calculate_config_hash(&config);
+    pub fn get_configured(&self, name: &str, config: &Value) -> Result<Arc<dyn Component>, Error> {
+        let config_hash = Self::calculate_config_hash(config);
         let key = ComponentKey {
             component_type: name.to_string(),
             config_hash,
@@ -343,15 +345,13 @@ impl ComponentRegistry {
                 return Ok(Arc::clone(component));
             }
         } else {
-            return Err(ComponentError::CacheError(
-                "Failed to acquire read lock".to_string(),
-            ));
+            return Err(Error::CacheError("Failed to acquire read lock".to_string()));
         }
 
         let factory = self
             .components
             .get(name)
-            .ok_or_else(|| ComponentError::NotRegistered(name.to_string()))?;
+            .ok_or_else(|| Error::NotRegistered(name.to_string()))?;
 
         println!("Configured component cache miss for {name}");
         let component = factory(config.clone());
@@ -359,7 +359,7 @@ impl ComponentRegistry {
             cache.insert(key, Arc::clone(&component));
             Ok(component)
         } else {
-            Err(ComponentError::CacheError(
+            Err(Error::CacheError(
                 "Failed to acquire write lock".to_string(),
             ))
         }
@@ -368,10 +368,7 @@ impl ComponentRegistry {
     /// Gets the raw component factory. This is primarily for internal use
     /// or advanced cases where you need to manage component configuration yourself.
     #[must_use]
-    pub fn get(
-        &self,
-        name: &str,
-    ) -> Option<&Arc<dyn Fn(Value) -> Arc<dyn Component> + Send + Sync>> {
+    pub fn get(&self, name: &str) -> Option<&RegisteredComponent> {
         self.components.get(name)
     }
 
@@ -383,9 +380,9 @@ impl ComponentRegistry {
     }
 }
 
-impl std::fmt::Debug for ComponentRegistry {
+impl std::fmt::Debug for Registry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ComponentRegistry")
+        f.debug_struct("Registry")
             .field(
                 "registered_components",
                 &self.components.keys().collect::<Vec<_>>(),
@@ -399,18 +396,19 @@ impl std::fmt::Debug for ComponentRegistry {
 }
 
 #[derive(Debug)]
-pub enum ComponentError {
+pub enum Error {
     NotRegistered(String),
     CacheError(String),
 }
 
-impl std::fmt::Display for ComponentError {
+impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ComponentError::NotRegistered(name) => {
+            Error::NotRegistered(name) => {
                 write!(f, "Component type '{name}' not registered")
             }
-            ComponentError::CacheError(msg) => write!(f, "Component cache error: {msg}"),
+            Error::CacheError(msg) => write!(f, "Component cache error: {msg}"),
+
         }
     }
 }

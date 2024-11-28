@@ -1,6 +1,6 @@
-use baselard::cache::DAGCache;
-use baselard::component::ComponentRegistry;
+use baselard::cache::Cache;
 use baselard::component::Data;
+use baselard::component::Registry;
 use baselard::components::*;
 use baselard::dag::DAGError;
 use baselard::dag::{DAGConfig, DAG, DAGIR};
@@ -10,8 +10,8 @@ use serde_json::Value;
 use std::sync::Arc;
 
 /// Initialize and return a shared `ComponentRegistry`
-fn setup_registry() -> ComponentRegistry {
-    let mut registry = ComponentRegistry::new();
+fn setup_registry() -> Registry {
+    let mut registry = Registry::new();
     registry.register::<adder::Adder>("Adder");
     registry.register::<string_length_counter::StringLengthCounter>("StringLengthCounter");
     registry.register::<wildcard_processor::WildcardProcessor>("WildcardProcessor");
@@ -64,7 +64,7 @@ async fn test_optimal_makespan() {
     ]);
 
     let registry = setup_registry();
-    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
     let start = std::time::Instant::now();
@@ -98,7 +98,7 @@ async fn test_simple_seq_adds_up() {
     ]);
 
     let registry = setup_registry();
-    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
     let dag = DAG::from_ir(dag_ir, &registry, dag_config, None).expect("Valid DAG");
     let results = dag.execute(None).await.expect("Execution success");
@@ -178,7 +178,7 @@ async fn test_complex_dag_execution() {
 
     let registry = setup_registry();
 
-    let dag_ir = DAGIR::from_json(json_config).expect("Failed to parse valid JSON config");
+    let dag_ir = DAGIR::from_json(&json_config).expect("Failed to parse valid JSON config");
     let dag_config = DAGConfig::cache_off();
 
     let mut expected_outputs: IndexMap<String, Data> = IndexMap::new();
@@ -265,7 +265,7 @@ async fn test_dag_execution_with_errors() {
 
     let registry = setup_registry();
 
-    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
     match DAG::from_ir(dag_ir, &registry, dag_config, None) {
@@ -307,7 +307,7 @@ async fn test_dag_execution_with_timeout() {
 
     let registry = setup_registry();
 
-    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
 
     match DAG::from_ir(dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
@@ -350,7 +350,7 @@ async fn test_dag_cycle_detection() {
     ]);
 
     let registry = setup_registry();
-    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
     match DAG::from_ir(dag_ir, &registry, dag_config, None) {
@@ -376,7 +376,7 @@ async fn test_dag_cycle_detection() {
 async fn test_dag_empty_graph() {
     let json_config = json!([]);
     let registry = setup_registry();
-    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
     match DAG::from_ir(dag_ir, &registry, dag_config, None) {
@@ -402,10 +402,13 @@ async fn test_dag_invalid_component_type() {
     }]);
 
     let registry = setup_registry();
-    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
-    assert!(DAG::from_ir(dag_ir, &registry, dag_config, None).is_err(), "Expected error for invalid component type");
+    assert!(
+        DAG::from_ir(dag_ir, &registry, dag_config, None).is_err(),
+        "Expected error for invalid component type"
+    );
 }
 
 #[tokio::test]
@@ -421,10 +424,13 @@ async fn test_dag_invalid_dependency() {
     ]);
 
     let registry = setup_registry();
-    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
-    assert!(DAG::from_ir(dag_ir, &registry, dag_config, None).is_err(), "Expected error for invalid dependency");
+    assert!(
+        DAG::from_ir(dag_ir, &registry, dag_config, None).is_err(),
+        "Expected error for invalid dependency"
+    );
 }
 
 #[tokio::test]
@@ -446,10 +452,13 @@ async fn test_dag_duplicate_node_ids() {
     ]);
 
     let registry = setup_registry();
-    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
-    assert!(DAG::from_ir(dag_ir, &registry, dag_config, None).is_err(), "Expected error for duplicate node IDs");
+    assert!(
+        DAG::from_ir(dag_ir, &registry, dag_config, None).is_err(),
+        "Expected error for duplicate node IDs"
+    );
 }
 
 #[tokio::test]
@@ -472,7 +481,7 @@ async fn test_dag_invalid_json_config() {
     ];
 
     for config in invalid_configs {
-        match DAGIR::from_json(config) {
+        match DAGIR::from_json(&config) {
             Ok(_) => panic!("Expected JSON parsing to fail"),
             Err(err) => {
                 println!("Got expected error: {err}");
@@ -511,7 +520,7 @@ async fn test_dag_large_parallel_execution() {
 
     let json_config = Value::Array(config_array);
     let registry = setup_registry();
-    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
     match DAG::from_ir(dag_ir, &registry, dag_config, None) {
@@ -556,7 +565,7 @@ async fn test_dag_cleanup_on_failure() {
     ]);
 
     let registry = setup_registry();
-    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
     match DAG::from_ir(dag_ir, &registry, dag_config, None) {
@@ -572,7 +581,7 @@ async fn test_dag_cleanup_on_failure() {
 async fn test_dag_with_caching() {
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
     let history_file = temp_dir.path().join("dag_history.jsonl");
-    let cache = Arc::new(DAGCache::new(
+    let cache = Arc::new(Cache::new(
         Some(history_file.to_str().unwrap().to_string()),
         10_000,
     ));
@@ -594,7 +603,7 @@ async fn test_dag_with_caching() {
     ]);
 
     let registry = setup_registry();
-    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::default();
 
     let dag =
@@ -616,7 +625,7 @@ async fn test_dag_with_caching() {
         .expect("Cached results exist");
     assert_eq!(results, cached_results.node_results);
 
-    let node_result = dag.get_cached_node_result("adder_1").await;
+    let node_result = dag.get_cached_node_result("adder_1");
     assert_eq!(node_result, Some(Data::Integer(47)));
 
     let file_contents = tokio::fs::read_to_string(history_file)
@@ -638,7 +647,7 @@ async fn test_dag_with_caching() {
 async fn test_dag_replay() {
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
     let history_file = temp_dir.path().join("replay_history.jsonl");
-    let cache = Arc::new(DAGCache::new(Some(history_file), 10_000));
+    let cache = Arc::new(Cache::new(Some(history_file), 10_000));
 
     let json_config = json!([
         {
@@ -657,7 +666,7 @@ async fn test_dag_replay() {
     ]);
 
     let registry = setup_registry();
-    let dag_ir = DAGIR::from_json(json_config).expect("Valid config");
+    let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::default(); // This enables history
 
     let dag =
