@@ -92,6 +92,14 @@ fn execute_component_blocking(
     }
 }
 
+/// This is a simple DAG that executes components in parallel,
+/// respecting dependencies. It shows optimal makespan.
+///
+/// It strips off everything else so that you can see the core logic:
+/// - Topological sort
+/// - Components execute in parallel, as soon as their dependencies are satisfied
+/// - Using watch::channel to notify when a Component has completed
+/// - Components can block (vs. yield nicely in tokio) but don't starve each other
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
     let components = vec![

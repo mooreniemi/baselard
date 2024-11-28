@@ -4,6 +4,7 @@ use ascii_tree::Tree;
 
 use crate::dag::DAGIR;
 
+
 #[derive(Debug, Clone, Copy)]
 pub enum TreeView {
     /// top-down from roots
