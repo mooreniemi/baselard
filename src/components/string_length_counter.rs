@@ -12,7 +12,7 @@ impl Component for StringLengthCounter {
 
     fn execute(&self, input: Data) -> Result<Data, DAGError> {
         let len = input.as_text().unwrap_or("").len();
-        Ok(Data::Integer(len as i32))
+        Ok(Data::Integer(i32::try_from(len).unwrap()))
     }
 
     fn input_type(&self) -> DataType {

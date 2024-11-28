@@ -33,7 +33,7 @@ impl Component for WildcardProcessor {
     }
 
     fn execute(&self, input: Data) -> Result<Data, DAGError> {
-        println!("WildcardProcessor input: {:?}", input);
+        println!("WildcardProcessor input: {input:?}");
         match input {
             Data::Json(mut value) => {
                 let mut fallback_map = serde_json::Map::new();
@@ -44,7 +44,7 @@ impl Component for WildcardProcessor {
                     if !input_object.contains_key(key) {
                         return Err(DAGError::ExecutionError {
                             node_id: "unknown".to_string(),
-                            reason: format!("Missing key: {}", key),
+                            reason: format!("Missing key: {key}"),
                         });
                     }
                 }

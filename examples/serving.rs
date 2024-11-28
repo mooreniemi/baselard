@@ -1,18 +1,18 @@
 use axum::{
     extract::{Json, State},
+    response::{IntoResponse, Response},
     routing::post,
     Router,
-    response::{IntoResponse, Response},
 };
+use baselard::cache::Cache;
 use baselard::{
-    component::{Component, ComponentRegistry, Data, DataType},
+    component::{Component, Data, DataType, Registry},
     components::{adder::Adder, payload_transformer::PayloadTransformer},
     dag::{DAGConfig, DAGError, DAG, DAGIR},
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Instant;
-use baselard::cache::DAGCache;
 
 #[derive(Debug)]
 struct Multiplier {
@@ -25,14 +25,15 @@ impl Component for Multiplier {
         Self { value: multiplier }
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     fn execute(&self, input: Data) -> Result<Data, DAGError> {
         let input_value = match input {
             Data::Null => 0.0,
-            Data::Integer(n) => n as f64,
+            Data::Integer(n) => f64::from(n),
             Data::List(list) => list
                 .iter()
-                .filter_map(|v| v.as_integer())
-                .map(|n| n as f64)
+                .filter_map(baselard::component::Data::as_integer)
+                .map(f64::from)
                 .sum(),
             _ => {
                 return Err(DAGError::TypeSystemFailure {
@@ -60,8 +61,8 @@ impl Component for Multiplier {
 }
 
 struct AppState {
-    registry: Arc<ComponentRegistry>,
-    cache: Arc<DAGCache>,
+    registry: Arc<Registry>,
+    cache: Arc<Cache>,
 }
 
 async fn execute_dag(
@@ -70,8 +71,13 @@ async fn execute_dag(
 ) -> Response {
     let start = Instant::now();
 
-    let result = match DAGIR::from_json(dag_config) {
-        Ok(ir) => match DAG::from_ir(ir, &state.registry, DAGConfig::default(), Some(Arc::clone(&state.cache))) {
+    let result = match DAGIR::from_json(&dag_config) {
+        Ok(ir) => match DAG::from_ir(
+            ir,
+            &state.registry,
+            DAGConfig::default(),
+            Some(Arc::clone(&state.cache)),
+        ) {
             Ok(dag) => dag.execute(None).await,
             Err(e) => Err(DAGError::InvalidConfiguration(e.to_string())),
         },
@@ -85,26 +91,25 @@ async fn execute_dag(
             "success": true,
             "results": outputs,
             "took_ms": elapsed
-        })).into_response(),
+        }))
+        .into_response(),
         Err(err) => Json(json!({
             "success": false,
             "error": format!("{:?}", err),
             "took_ms": elapsed
-        })).into_response(),
+        }))
+        .into_response(),
     }
 }
 
 #[tokio::main]
 async fn main() {
-    let mut registry = ComponentRegistry::new();
+    let mut registry = Registry::new();
     registry.register::<Adder>("Adder");
     registry.register::<Multiplier>("Multiplier");
     registry.register::<PayloadTransformer>("PayloadTransformer");
 
-    let cache = DAGCache::new(
-        Some("/tmp/axum_dag_history.jsonl"),
-        10_000,
-    );
+    let cache = Cache::new(Some("/tmp/axum_dag_history.jsonl"), 10_000);
 
     let state = Arc::new(AppState {
         registry: Arc::new(registry),
@@ -121,7 +126,5 @@ async fn main() {
         .await
         .unwrap();
 
-    axum::serve(listener, app)
-        .await
-        .unwrap();
+    axum::serve(listener, app).await.unwrap();
 }

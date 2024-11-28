@@ -15,9 +15,9 @@ use tokio::task;
 use tokio::time::timeout;
 use uuid::Uuid;
 
-use crate::cache::DAGCache;
+use crate::cache::Cache;
 use crate::cache::DAGResult;
-use crate::component::ComponentRegistry;
+use crate::component::Registry;
 use crate::component::{Component, Data, DataType};
 
 #[derive(Debug, Clone)]
@@ -41,9 +41,21 @@ struct Edge {
     target: String,
     target_input: String,
 }
-
 impl DAGIR {
-    pub fn from_json(json_config: Value) -> Result<Self, String> {
+    /// Creates a new DAGIR from a JSON configuration
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The root JSON is not an array
+    /// - Any node is missing required fields (`id`, `component_type`, `config`)
+    /// - Any node ID is empty
+    /// - Any input data is of an unsupported type
+    ///
+    /// # Panics
+    ///
+    /// Panics if integer conversion fails when processing numeric inputs
+    pub fn from_json(json_config: &Value) -> Result<Self, String> {
         let start = Instant::now();
         let mut nodes = Vec::new();
         let mut edges: HashMap<String, Vec<Edge>> = HashMap::new();
@@ -66,12 +78,12 @@ impl DAGIR {
             let component_type = node
                 .get("component_type")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| format!("Node {} missing component_type", id))?
+                .ok_or_else(|| format!("Node {id} missing component_type"))?
                 .to_string();
 
             let config = node
                 .get("config")
-                .ok_or_else(|| format!("Node {} missing config", id))?
+                .ok_or_else(|| format!("Node {id} missing config"))?
                 .clone();
 
             let namespace = node
@@ -85,18 +97,19 @@ impl DAGIR {
                     Value::String(s) => Ok(Data::Text(s.clone())),
                     Value::Number(n) => n
                         .as_i64()
-                        .map(|i| Data::Integer(i as i32))
+                        .map(|i| Data::Integer(i32::try_from(i).unwrap()))
                         .ok_or_else(|| "Unsupported number type in inputs".to_string()),
                     Value::Array(arr) => {
                         let data_list = arr
                             .iter()
                             .map(|item| match item {
                                 Value::String(s) => Ok(Data::Text(s.clone())),
-                                Value::Number(n) => {
-                                    n.as_i64().map(|i| Data::Integer(i as i32)).ok_or_else(|| {
+                                Value::Number(n) => n
+                                    .as_i64()
+                                    .map(|i| Data::Integer(i32::try_from(i).unwrap()))
+                                    .ok_or_else(|| {
                                         "Unsupported number type in array input".to_string()
-                                    })
-                                }
+                                    }),
                                 _ => Err("Unsupported type in array input".to_string()),
                             })
                             .collect::<Result<Vec<_>, String>>()?;
@@ -118,19 +131,19 @@ impl DAGIR {
             if let Some(depends_on) = node.get("depends_on") {
                 let deps = depends_on
                     .as_array()
-                    .ok_or_else(|| format!("Node {} depends_on must be an array", id))?;
+                    .ok_or_else(|| format!("Node {id} depends_on must be an array"))?;
 
                 let mut node_edges = Vec::new();
                 for dep in deps {
                     let source = dep
                         .as_str()
-                        .ok_or_else(|| format!("Node {} dependency must be a string", id))?
+                        .ok_or_else(|| format!("Node {id} dependency must be a string"))?
                         .to_string();
 
                     node_edges.push(Edge {
                         source,
                         target: id.clone(),
-                        target_input: "".to_string(),
+                        target_input: String::new(),
                     });
                 }
                 if !node_edges.is_empty() {
@@ -140,10 +153,11 @@ impl DAGIR {
         }
 
         let duration = start.elapsed();
-        println!("DAGIR from_json took {:?}", duration);
+        println!("DAGIR from_json took {duration:?}");
         Ok(DAGIR { nodes, edges })
     }
 
+    #[must_use]
     pub fn calculate_hash(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
 
@@ -217,8 +231,7 @@ impl std::fmt::Display for DAGError {
             } => {
                 write!(
                     f,
-                    "Node {}: Type mismatch. Expected {:?}, got {:?}",
-                    node_id, expected, actual
+                    "Node {node_id}: Type mismatch. Expected {expected:?}, got {actual:?}"
                 )
             }
             DAGError::MissingDependency {
@@ -227,31 +240,22 @@ impl std::fmt::Display for DAGError {
             } => {
                 write!(
                     f,
-                    "Node {}: Missing output from dependency {}",
-                    node_id, dependency_id
+                    "Node {node_id}: Missing output from dependency {dependency_id}"
                 )
             }
             DAGError::ExecutionError { node_id, reason } => {
-                write!(f, "Node {}: Execution failed. Reason: {}", node_id, reason)
+                write!(f, "Node {node_id}: Execution failed. Reason: {reason}")
             }
             DAGError::InvalidConfiguration(reason) => {
-                write!(f, "Invalid configuration: {}", reason)
+                write!(f, "Invalid configuration: {reason}")
             }
             DAGError::CycleDetected => write!(f, "Cycle detected in the DAG"),
-            DAGError::NodeNotFound { node } => write!(f, "Node {} not found", node),
+            DAGError::NodeNotFound { node } => write!(f, "Node {node} not found"),
             DAGError::NoValidInputs { node_id, expected } => {
-                write!(
-                    f,
-                    "Node {}: No valid inputs. Expected {:?}",
-                    node_id, expected
-                )
+                write!(f, "Node {node_id}: No valid inputs. Expected {expected:?}")
             }
             DAGError::HistoricalResultNotFound { request_id } => {
-                write!(
-                    f,
-                    "No historical result found for request ID: {}",
-                    request_id
-                )
+                write!(f, "No historical result found for request ID: {request_id}")
             }
             DAGError::TypeSystemFailure {
                 component,
@@ -260,8 +264,7 @@ impl std::fmt::Display for DAGError {
             } => {
                 write!(
                     f,
-                    "Type system failure in component {}: Expected {:?}, received {:?}",
-                    component, expected, received
+                    "Type system failure in component {component}: Expected {expected:?}, received {received:?}"
                 )
             }
         }
@@ -278,18 +281,22 @@ pub struct DAGConfig {
 }
 
 impl DAGConfig {
+    #[must_use]
     pub fn enable_memory_cache(&self) -> bool {
         self.enable_memory_cache
     }
 
+    #[must_use]
     pub fn enable_history(&self) -> bool {
         self.enable_history
     }
 
+    #[must_use]
     pub fn per_node_timeout_ms(&self) -> Option<u64> {
         self.per_node_timeout_ms
     }
 
+    #[must_use]
     pub fn cache_off() -> Self {
         Self {
             per_node_timeout_ms: Some(200),
@@ -309,20 +316,33 @@ impl Default for DAGConfig {
     }
 }
 
+pub type Notifiers = Arc<Mutex<HashMap<String, watch::Sender<()>>>>;
+pub type SharedResults = Arc<Mutex<IndexMap<String, Data>>>;
+
 pub struct DAG {
     nodes: Arc<HashMap<String, Arc<dyn Component>>>,
     edges: Arc<HashMap<String, Vec<Edge>>>,
     initial_inputs: Arc<HashMap<String, Data>>,
     config: DAGConfig,
-    cache: Option<Arc<DAGCache>>,
+    cache: Option<Arc<Cache>>,
     ir_hash: u64,
 }
+
 impl DAG {
+    /// Creates a new DAG from an IR representation
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - There are duplicate node IDs
+    /// - A node depends on a non-existent node
+    /// - Component creation fails
+    /// - Initial input types don't match component input types
     pub fn from_ir(
         ir: DAGIR,
-        registry: &ComponentRegistry,
+        registry: &Registry,
         config: DAGConfig,
-        cache: Option<Arc<DAGCache>>,
+        cache: Option<Arc<Cache>>,
     ) -> Result<Self, String> {
         let ir_hash = ir.calculate_hash();
         let mut nodes = HashMap::new();
@@ -330,7 +350,7 @@ impl DAG {
         let mut initial_inputs = HashMap::new();
         let mut node_ids = HashSet::new();
 
-        println!("DAGConfig: {:?}", config);
+        println!("DAGConfig: {config:?}");
 
         println!("Checking for duplicate node IDs");
         for node in &ir.nodes {
@@ -339,11 +359,11 @@ impl DAG {
             }
         }
 
-        println!("Registry: {:?}", registry);
+        println!("Registry: {registry:?}");
         println!("Creating components");
         for node in ir.nodes {
             let component = registry
-                .get_configured(&node.component_type, node.config.clone())
+                .get_configured(&node.component_type, &node.config)
                 .map_err(|e| format!("Failed to get component for node {}: {}", node.id, e))?;
 
             if let Some(input) = &node.inputs {
@@ -369,7 +389,7 @@ impl DAG {
                     }
                     edges
                         .entry(dep.target.clone())
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(dep.clone());
                 }
             }
@@ -407,6 +427,15 @@ impl DAG {
         }
     }
 
+    /// Execute the DAG with the given request ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `DAGError` if:
+    /// - Any node execution fails
+    /// - There are missing dependencies
+    /// - There are type mismatches between node inputs/outputs
+    /// - The DAG contains cycles
     pub async fn execute(
         &self,
         request_id: Option<String>,
@@ -421,7 +450,9 @@ impl DAG {
 
         if self.config.enable_memory_cache() {
             if let Some(cache) = &self.cache {
-                if let Some(cached_result) = cache.get_cached_result(self.ir_hash, &self.initial_inputs) {
+                if let Some(cached_result) =
+                    cache.get_cached_result(self.ir_hash, &self.initial_inputs)
+                {
                     println!(
                         "[{:.2}s] Cache hit! Returning cached result",
                         start_time.elapsed().as_secs_f32()
@@ -462,7 +493,7 @@ impl DAG {
     }
 
     fn compute_execution_order(&self, elapsed_secs: f32) -> Result<Vec<String>, DAGError> {
-        println!("[{:.2}s] Starting topological sort", elapsed_secs);
+        println!("[{elapsed_secs:.2}s] Starting topological sort");
         let mut in_degree: HashMap<String, usize> = HashMap::new();
         let mut graph: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -481,7 +512,7 @@ impl DAG {
             }
         }
 
-        println!("Initial in-degrees: {:?}", in_degree);
+        println!("Initial in-degrees: {in_degree:?}");
 
         let mut zero_degree_nodes: Vec<_> = in_degree
             .iter()
@@ -508,8 +539,7 @@ impl DAG {
         }
 
         println!(
-            "[{:.2}s] Topological sort complete. Execution order: {:?}",
-            elapsed_secs, sorted_nodes
+            "[{elapsed_secs:.2}s] Topological sort complete. Execution order: {sorted_nodes:?}"
         );
 
         if sorted_nodes.len() != self.nodes.len() {
@@ -519,14 +549,8 @@ impl DAG {
         Ok(sorted_nodes)
     }
 
-    fn setup_execution_state(
-        &self,
-        elapsed_secs: f32,
-    ) -> (
-        Arc<Mutex<HashMap<String, watch::Sender<()>>>>,
-        Arc<Mutex<IndexMap<String, Data>>>,
-    ) {
-        println!("[{:.2}s] Setting up notification channels", elapsed_secs);
+    fn setup_execution_state(&self, elapsed_secs: f32) -> (Notifiers, SharedResults) {
+        println!("[{elapsed_secs:.2}s] Setting up notification channels");
 
         let mut results = IndexMap::new();
         results.extend((*self.initial_inputs).clone());
@@ -545,8 +569,8 @@ impl DAG {
     async fn execute_nodes(
         &self,
         sorted_nodes: Vec<String>,
-        notifiers: Arc<Mutex<HashMap<String, watch::Sender<()>>>>,
-        shared_results: Arc<Mutex<IndexMap<String, Data>>>,
+        notifiers: Notifiers,
+        shared_results: SharedResults,
         elapsed_secs: f32,
     ) -> Result<IndexMap<String, Data>, DAGError> {
         for node_id in &sorted_nodes {
@@ -562,37 +586,37 @@ impl DAG {
 
         let mut handles = Vec::new();
         for node_id in sorted_nodes {
-            handles.push(self.spawn_node_task(
-                node_id,
-                Arc::clone(&notifiers),
-                Arc::clone(&shared_results),
-                elapsed_secs,
-            ));
+            handles.push(self.spawn_node_task(&node_id, &notifiers, &shared_results, elapsed_secs));
         }
 
-        println!("[{:.2}s] Waiting for all tasks to complete", elapsed_secs);
+        println!("[{elapsed_secs:.2}s] Waiting for all tasks to complete");
 
         for handle in handles {
             handle.await.map_err(|e| DAGError::ExecutionError {
                 node_id: "unknown".to_string(),
-                reason: format!("Task join error: {}", e),
+                reason: format!("Task join error: {e}"),
             })??;
         }
 
         let final_results = (*shared_results.lock().unwrap()).clone();
-        println!("[{:.2}s] All tasks completed", elapsed_secs);
-        println!("Final results: {:?}", final_results);
+        println!("[{elapsed_secs:.2}s] All tasks completed");
+        println!("Final results: {final_results:?}");
 
         Ok(final_results)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn spawn_node_task(
         &self,
-        node_id: String,
-        notifiers: Arc<Mutex<HashMap<String, watch::Sender<()>>>>,
-        shared_results: Arc<Mutex<IndexMap<String, Data>>>,
+        node_id: &str,
+        notifiers: &Notifiers,
+        shared_results: &SharedResults,
         elapsed_secs: f32,
     ) -> tokio::task::JoinHandle<Result<(), DAGError>> {
+        let node_id = node_id.to_string();
+        let notifiers = Arc::clone(notifiers);
+        let shared_results = Arc::clone(shared_results);
+
         let mut receivers = HashMap::new();
         if let Some(edges) = self.edges.get(&node_id) {
             for edge in edges {
@@ -623,7 +647,7 @@ impl DAG {
                 if let Err(e) = receiver.changed().await {
                     return Err(DAGError::ExecutionError {
                         node_id: node_id_for_async.clone(),
-                        reason: format!("Failed to receive dependency notification: {}", e),
+                        reason: format!("Failed to receive dependency notification: {e}"),
                     });
                 }
             }
@@ -644,8 +668,7 @@ impl DAG {
                         &node_id_for_blocking,
                         edges
                             .get(&node_id_for_blocking)
-                            .map(|e| e.as_slice())
-                            .unwrap_or(&[]),
+                            .map_or(&[], std::vec::Vec::as_slice),
                         &results_guard,
                         &initial_inputs,
                         &nodes.get(&node_id_for_blocking).unwrap().input_type(),
@@ -663,17 +686,17 @@ impl DAG {
                 match timeout(Duration::from_millis(ms), execution).await {
                     Ok(result) => result.map_err(|e| DAGError::ExecutionError {
                         node_id: node_id_for_error.clone(),
-                        reason: format!("Task join error: {}", e),
+                        reason: format!("Task join error: {e}"),
                     })?,
                     Err(_) => Err(DAGError::ExecutionError {
                         node_id: node_id_for_error.clone(),
-                        reason: format!("Node execution timed out after {}ms", ms),
+                        reason: format!("Node execution timed out after {ms}ms"),
                     }),
                 }
             } else {
                 execution.await.map_err(|e| DAGError::ExecutionError {
                     node_id: node_id_for_error.clone(),
-                    reason: format!("Task join error: {}", e),
+                    reason: format!("Task join error: {e}"),
                 })?
             };
 
@@ -713,7 +736,7 @@ impl DAG {
         initial_inputs: &HashMap<String, Data>,
         expected_type: &DataType,
     ) -> Result<Data, DAGError> {
-        println!("Preparing input data for node {}", node_id);
+        println!("Preparing input data for node {node_id}");
 
         if !edges.is_empty() {
             let mut valid_inputs = Vec::new();
@@ -751,12 +774,12 @@ impl DAG {
 
     fn handle_caching(
         &self,
-        cache: &Arc<DAGCache>,
+        cache: &Arc<Cache>,
         final_results: &IndexMap<String, Data>,
         request_id: &str,
         elapsed_secs: f32,
     ) {
-        println!("[{:.2}s] Caching results", elapsed_secs);
+        println!("[{elapsed_secs:.2}s] Caching results");
         let cache = Arc::clone(cache);
         let results_copy = final_results.clone();
         let inputs = self.initial_inputs.clone();
@@ -764,13 +787,18 @@ impl DAG {
         let ir_hash = self.ir_hash;
 
         tokio::spawn(async move {
-            cache
-                .store_result(ir_hash, &inputs, results_copy, Some(request_id))
-                .await;
+            cache.store_result(ir_hash, &inputs, results_copy, Some(request_id));
         });
     }
 
     /// Replay a previous execution by request ID
+    ///
+    /// # Errors
+    ///
+    /// Returns a `DAGError` if:
+    /// - History replay is disabled
+    /// - Cache is not configured
+    /// - No historical result found for the given request ID
     pub async fn replay(&self, request_id: &str) -> Result<IndexMap<String, Data>, DAGError> {
         if !self.config.enable_history {
             return Err(DAGError::InvalidConfiguration(
@@ -793,6 +821,7 @@ impl DAG {
         }
     }
 
+    #[must_use]
     pub fn get_cached_result(&self) -> Option<DAGResult> {
         if !self.config.enable_memory_cache {
             println!("Memory cache is disabled");
@@ -803,6 +832,7 @@ impl DAG {
             .and_then(|c| c.get_cached_result(self.ir_hash, &self.initial_inputs))
     }
 
+    #[must_use]
     pub fn get_result_by_request_id(&self, request_id: &str) -> Option<DAGResult> {
         if !self.config.enable_memory_cache {
             return None;
@@ -812,7 +842,8 @@ impl DAG {
             .and_then(|c| c.get_result_by_request_id(request_id))
     }
 
-    pub async fn get_cached_node_result(&self, node_id: &str) -> Option<Data> {
+    #[must_use]
+    pub fn get_cached_node_result(&self, node_id: &str) -> Option<Data> {
         if !self.config.enable_memory_cache {
             return None;
         }

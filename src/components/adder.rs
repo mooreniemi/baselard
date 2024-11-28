@@ -10,12 +10,12 @@ pub struct Adder {
 impl Component for Adder {
     fn configure(config: Value) -> Self {
         Adder {
-            value: config["value"].as_i64().unwrap() as i32,
+            value: i32::try_from(config["value"].as_i64().unwrap()).unwrap(),
         }
     }
 
     fn execute(&self, input: Data) -> Result<Data, DAGError> {
-        println!("Adder input: {:?}", input);
+        println!("Adder input: {input:?}");
         let input_value = match input {
             Data::Integer(v) => v,
             Data::List(list) => list.into_iter().filter_map(|v| v.as_integer()).sum(),

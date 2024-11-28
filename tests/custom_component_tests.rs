@@ -1,5 +1,5 @@
-use baselard::cache::DAGCache;
-use baselard::component::ComponentRegistry;
+use baselard::cache::Cache;
+use baselard::component::Registry;
 use baselard::component::{Component, Data, DataType};
 use baselard::components::adder::Adder;
 use baselard::dag::{DAGConfig, DAGError, DAG, DAGIR};
@@ -17,14 +17,15 @@ impl Component for Multiplier {
         Self { value: multiplier }
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     fn execute(&self, input: Data) -> Result<Data, DAGError> {
         let input_value = match input {
             Data::Null => 0.0,
-            Data::Integer(n) => n as f64,
+            Data::Integer(n) => f64::from(n),
             Data::List(list) => list
                 .iter()
-                .filter_map(|v| v.as_integer())
-                .map(|n| n as f64)
+                .filter_map(baselard::component::Data::as_integer)
+                .map(f64::from)
                 .sum(),
             _ => {
                 return Err(DAGError::TypeSystemFailure {
@@ -51,8 +52,8 @@ impl Component for Multiplier {
     }
 }
 
-fn setup_test_registry() -> ComponentRegistry {
-    let mut registry = ComponentRegistry::new();
+fn setup_test_registry() -> Registry {
+    let mut registry = Registry::new();
     registry.register::<Adder>("Adder");
     registry.register::<Multiplier>("Multiplier");
     registry
@@ -68,7 +69,7 @@ async fn test_basic_multiplication() {
         "inputs": 10
     }]);
 
-    let dag = DAGIR::from_json(json_config)
+    let dag = DAGIR::from_json(&json_config)
         .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None))
         .expect("Valid DAG");
 
@@ -100,7 +101,7 @@ async fn test_chained_operations() {
         }
     ]);
 
-    let dag = DAGIR::from_json(json_config)
+    let dag = DAGIR::from_json(&json_config)
         .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None))
         .expect("Valid DAG");
 
@@ -127,9 +128,12 @@ async fn test_error_handling_config() {
         "inputs": 10
     }]);
 
-    let result = DAGIR::from_json(invalid_config)
+    let result = DAGIR::from_json(&invalid_config)
         .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None));
-    assert!(matches!(result, Err(_)), "Invalid configuration should return an error");
+    assert!(
+        result.is_err(),
+        "Invalid configuration should return an error"
+    );
 }
 
 #[tokio::test]
@@ -142,16 +146,16 @@ async fn test_error_handling_input() {
         "inputs": "not a number"
     }]);
 
-    let result = DAGIR::from_json(invalid_input)
+    let result = DAGIR::from_json(&invalid_input)
         .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None));
-    assert!(matches!(result, Err(_)), "Invalid input should return an error");
+    assert!(result.is_err(), "Invalid input should return an error");
 }
 
 #[tokio::test]
 async fn test_caching_and_replay() {
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
     let history_file = temp_dir.path().join("multiplier_history.jsonl");
-    let cache = Arc::new(DAGCache::new(Some(history_file), 10_000));
+    let cache = Arc::new(Cache::new(Some(history_file), 10_000));
 
     let json_config = json!([
         {
@@ -163,7 +167,7 @@ async fn test_caching_and_replay() {
     ]);
 
     let registry = setup_test_registry();
-    let dag = DAGIR::from_json(json_config)
+    let dag = DAGIR::from_json(&json_config)
         .and_then(|ir| {
             DAG::from_ir(
                 ir,
@@ -199,7 +203,7 @@ async fn test_default_input() {
 
     }]);
 
-    let dag = DAGIR::from_json(json_config)
+    let dag = DAGIR::from_json(&json_config)
         .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None))
         .expect("Valid DAG");
 

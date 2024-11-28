@@ -20,7 +20,7 @@ impl Component for CrashTestDummy {
 
     fn execute(&self, _input: Data) -> Result<Data, DAGError> {
         if let Some(duration) = self.sleep_duration_ms {
-            println!("CrashTestDummy: Sleeping for {}ms", duration);
+            println!("CrashTestDummy: Sleeping for {duration}ms");
             std::thread::sleep(std::time::Duration::from_millis(duration));
         }
 

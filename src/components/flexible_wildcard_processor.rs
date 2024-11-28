@@ -11,7 +11,7 @@ impl Component for FlexibleWildcardProcessor {
     }
 
     fn execute(&self, input: Data) -> Result<Data, DAGError> {
-        println!("FlexibleWildcardProcessor input: {:?}", input);
+        println!("FlexibleWildcardProcessor input: {input:?}");
         let json_input = match input {
             Data::Null => json!({ "type": "null" }),
             Data::Json(value) => {

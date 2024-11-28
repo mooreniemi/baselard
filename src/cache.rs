@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use moka::sync::Cache;
+use moka::sync::Cache as MokaCache;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -29,20 +29,20 @@ struct DAGInputHash {
 /// We cache results in two ways:
 /// - By DAG inputs and configuration, for memoized behavior
 /// - By request ID (in memory and backed on a file) for specific replay
-pub struct DAGCache {
+pub struct Cache {
     /// Cache keyed by DAG inputs configuration
-    request_cache: Arc<Cache<DAGInputHash, DAGResult>>,
+    request_cache: Arc<MokaCache<DAGInputHash, DAGResult>>,
     /// Cache keyed by request ID for testing/lookup
-    history_cache: Arc<Cache<RequestId, DAGResult>>,
+    history_cache: Arc<MokaCache<RequestId, DAGResult>>,
     /// History file path
     history_file: Option<PathBuf>,
 }
 
-impl DAGCache {
+impl Cache {
     pub fn new(history_file: Option<impl Into<PathBuf>>, max_capacity: u64) -> Self {
         Self {
-            request_cache: Arc::new(Cache::new(max_capacity)),
-            history_cache: Arc::new(Cache::new(max_capacity)),
+            request_cache: Arc::new(MokaCache::new(max_capacity)),
+            history_cache: Arc::new(MokaCache::new(max_capacity)),
             history_file: history_file.map(Into::into),
         }
     }
@@ -56,14 +56,14 @@ impl DAGCache {
 
     fn calculate_inputs_hash(map: &HashMap<String, Data>) -> u64 {
         let mut hasher = DefaultHasher::new();
-        for (key, value) in map.iter() {
+        for (key, value) in map {
             key.hash(&mut hasher);
             value.hash(&mut hasher);
         }
         hasher.finish()
     }
 
-    pub async fn store_result(
+    pub fn store_result(
         &self,
         ir_hash: u64,
         inputs: &HashMap<String, Data>,
@@ -105,13 +105,14 @@ impl DAGCache {
                     .await
                 {
                     if let Ok(json) = serde_json::to_string(&history_result) {
-                        let _ = file.write_all(format!("{}\n", json).as_bytes()).await;
+                        let _ = file.write_all(format!("{json}\n").as_bytes()).await;
                     }
                 }
             });
         }
     }
 
+    #[must_use]
     pub fn get_cached_result(
         &self,
         ir_hash: u64,
@@ -121,6 +122,7 @@ impl DAGCache {
         self.request_cache.get(&cache_key)
     }
 
+    #[must_use]
     pub fn get_result_by_request_id(&self, request_id: &str) -> Option<DAGResult> {
         self.history_cache.get(request_id)
     }
@@ -132,9 +134,8 @@ impl DAGCache {
 
         let history_file = self.history_file.as_ref()?;
 
-        let file = match tokio::fs::File::open(history_file).await {
-            Ok(file) => file,
-            Err(_) => return None,
+        let Ok(file) = tokio::fs::File::open(history_file).await else {
+            return None;
         };
 
         let reader = tokio::io::BufReader::new(file);
@@ -153,6 +154,7 @@ impl DAGCache {
         None
     }
 
+    #[must_use]
     pub fn get_cached_node_result(
         &self,
         ir_hash: u64,
