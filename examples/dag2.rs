@@ -150,7 +150,6 @@ async fn main() {
         let execution_time = component.execution_time;
         let notifiers = Arc::clone(&notifiers);
         let outputs = Arc::clone(&outputs);
-        let start_time = start_time;
 
         let handle = task::spawn_blocking(move || {
             execute_component_blocking(

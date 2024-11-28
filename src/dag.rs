@@ -21,25 +21,24 @@ use crate::component::Registry;
 use crate::component::{Component, Data, DataType};
 
 #[derive(Debug, Clone)]
-struct NodeIR {
-    id: String,
-    namespace: Option<String>,
-    component_type: String,
-    config: Value,
-    inputs: Option<Data>,
+pub(crate) struct NodeIR {
+    pub(crate) id: String,
+    pub(crate) namespace: Option<String>,
+    pub(crate) component_type: String,
+    pub(crate) config: Value,
+    pub(crate) inputs: Option<Data>,
 }
 
 #[derive(Debug)]
 pub struct DAGIR {
-    nodes: Vec<NodeIR>,
-    edges: HashMap<String, Vec<Edge>>,
+    pub(crate) nodes: Vec<NodeIR>,
+    pub(crate) edges: HashMap<String, Vec<Edge>>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-struct Edge {
-    source: String,
-    target: String,
-    target_input: String,
+pub(crate) struct Edge {
+    pub(crate) source: String,
+    pub(crate) target: String,
 }
 impl DAGIR {
     /// Creates a new DAGIR from a JSON configuration
@@ -143,7 +142,6 @@ impl DAGIR {
                     node_edges.push(Edge {
                         source,
                         target: id.clone(),
-                        target_input: String::new(),
                     });
                 }
                 if !node_edges.is_empty() {

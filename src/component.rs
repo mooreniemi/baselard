@@ -302,6 +302,7 @@ pub struct Registry {
     configured_component_cache: Arc<RwLock<HashMap<ComponentKey, Arc<dyn Component>>>>,
 }
 
+
 impl Default for Registry {
     fn default() -> Self {
         Self::new()
@@ -386,7 +387,11 @@ impl std::fmt::Debug for Registry {
                 "registered_components",
                 &self.components.keys().collect::<Vec<_>>(),
             )
-            .finish_non_exhaustive()
+            .field(
+                "configured_component_cache",
+                &self.configured_component_cache.read().unwrap().len(),
+            )
+            .finish()
     }
 }
 
@@ -403,6 +408,7 @@ impl std::fmt::Display for Error {
                 write!(f, "Component type '{name}' not registered")
             }
             Error::CacheError(msg) => write!(f, "Component cache error: {msg}"),
+
         }
     }
 }
