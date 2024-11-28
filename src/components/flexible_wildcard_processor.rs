@@ -22,7 +22,7 @@ impl Component for FlexibleWildcardProcessor {
                 } else {
                     json!({ "type": "json", "value": value })
                 }
-            },
+            }
             Data::Integer(i) => json!({ "type": "integer", "value": i }),
             Data::Float(f) => json!({ "type": "float", "value": f }),
             Data::Text(t) => json!({ "type": "text", "value": t }),
