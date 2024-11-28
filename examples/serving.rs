@@ -97,7 +97,7 @@ async fn execute_dag(
         .and_then(|h| h.to_str().ok())
         .is_some_and(|s| s.to_lowercase().contains("no-cache"));
 
-    let result = match DAGIR::from_json(dag_config) {
+    let result = match DAGIR::from_json(&dag_config) {
         Ok(ir) => {
             let tree = ir.build_tree(TreeView::Dependency);
             let mut output = String::new();
