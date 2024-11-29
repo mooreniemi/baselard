@@ -1,0 +1,47 @@
+[
+    {
+      "id": "transform_timestamps",
+      "component_type": "PayloadTransformer",
+      "config": {
+        "transformation_expression": "
+          def to_epoch: fromdateiso8601;
+          def start_of_day: (now | floor / 86400 | floor * 86400);
+          def start_of_last_week: (start_of_day - (7 * 86400));
+          def start_of_last_year: (start_of_day - (365 * 86400));
+  
+          {
+            today: .timestamps | map(select((to_epoch >= start_of_day))),
+            last_week: .timestamps | map(select((to_epoch < start_of_day) and (to_epoch >= start_of_last_week))),
+            last_year: .timestamps | map(select((to_epoch < start_of_last_week) and (to_epoch >= start_of_last_year)))
+          }
+        ",
+        "validation_data": {
+          "timestamps": [
+            "2024-01-01T00:00:00Z",
+            "2023-12-25T00:00:00Z",
+            "2023-01-01T00:00:00Z"
+          ]
+        }
+      },
+      "inputs": {
+        "timestamps": [
+            "2024-11-29T08:00:00Z",
+            "2024-11-29T12:30:00Z",
+            "2024-11-28T18:45:00Z",
+            "2024-11-27T14:15:00Z",
+            "2024-11-23T09:00:00Z",
+            "2024-11-21T23:59:59Z",
+            "2024-10-15T11:11:11Z",
+            "2023-12-01T07:45:00Z",
+            "2023-11-15T06:30:00Z",
+            "2022-11-29T22:00:00Z",
+            "2024-09-01T00:00:00Z",
+            "2024-08-15T16:20:00Z",
+            "2024-01-01T01:01:01Z",
+            "2023-07-04T17:00:00Z",
+            "2023-01-01T12:00:00Z",
+            "2022-11-28T13:13:13Z"
+        ]
+      }
+    }
+  ]

@@ -1,0 +1,34 @@
+[
+    {
+        "id": "one_hot_encode_categories",
+        "component_type": "PayloadTransformer",
+        "config": {
+            "transformation_expression": "
+                .values |
+                def unique_categories: unique;
+
+                def one_hot_encode:
+                    unique_categories as $unique |
+                    map(
+                        . as $item |
+                        $unique |
+                        map(
+                            if . == $item then 1 else 0 end
+                        )
+                    );
+
+                {
+                    original: .,
+                    unique_categories: unique_categories,
+                    one_hot_encoded: one_hot_encode
+                }
+            ",
+            "validation_data": {
+                "values": ["test1", "test2", "test1"]
+            }
+        },
+        "inputs": {
+            "values": ["apple", "banana", "apple", "cherry", "banana"]
+        }
+    }
+]

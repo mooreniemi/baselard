@@ -13,13 +13,7 @@
           count: length,
           avg_price: (map(.price) | add / length)
         }))
-      }",
-      "validation_data": {
-        "items": [
-          {"name": "Test1", "price": 100, "category": "A"},
-          {"name": "Test2", "price": 10, "category": "B"}
-        ]
-      }
+      }"
     },
     "inputs": {
       "items": [

@@ -26,9 +26,18 @@ Baselard is a library for building and executing directed acyclic graphs (DAGs) 
 To try a complex transform (if you have `cargo run --example serving` running),
 
 ```
-curl -X POST http://localhost:3000/execute \
+curl -s -X POST http://localhost:3000/execute \
   -H "Content-Type: application/json" \
   -d @tests/resources/complex_transform.json
+```
+
+You can also turn the cache off by adding `"cache": "no-cache"` to the request.
+
+```
+curl -s -X POST http://localhost:3000/execute \
+  -H "Cache-Control: no-cache" \
+  -H "Content-Type: application/json" \
+  -d @tests/resources/timestamp_bucketing.json
 ```
 
 ### JQ Setup
