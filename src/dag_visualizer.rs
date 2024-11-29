@@ -21,7 +21,7 @@ impl DAGIR {
                 let mut node_map: HashMap<&String, Vec<&String>> = HashMap::new();
 
                 // For each node, look at its dependencies to build parent->child relationships
-                for node in &self.nodes {
+                for node in self.nodes.iter() {
                     if let Some(edges) = self.edges.get(&node.id) {
                         node_map.entry(&node.id).or_default(); // Ensure every node has an entry
                         for edge in edges {
@@ -51,7 +51,7 @@ impl DAGIR {
                 // Build a map of each node to its parents
                 let mut node_map: HashMap<&String, Vec<&String>> = HashMap::new();
 
-                for node in &self.nodes {
+                for node in self.nodes.iter() {
                     node_map.entry(&node.id).or_default();
                     if let Some(edges) = self.edges.get(&node.id) {
                         for edge in edges {

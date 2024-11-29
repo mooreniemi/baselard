@@ -2,6 +2,8 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
+use sorted_vec::SortedVec;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
@@ -20,25 +22,47 @@ use crate::cache::DAGResult;
 use crate::component::Registry;
 use crate::component::{Component, Data, DataType};
 
+type NodeID = String;
+
 #[derive(Debug, Clone)]
 pub(crate) struct NodeIR {
-    pub(crate) id: String,
+    pub(crate) id: NodeID,
     pub(crate) namespace: Option<String>,
     pub(crate) component_type: String,
     pub(crate) config: Value,
     pub(crate) inputs: Option<Data>,
 }
 
+impl Eq for NodeIR {}
+
+impl PartialEq for NodeIR {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl PartialOrd for NodeIR {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for NodeIR {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id.cmp(&other.id)
+    }
+}
+
 #[derive(Debug)]
 pub struct DAGIR {
-    pub(crate) nodes: Vec<NodeIR>,
-    pub(crate) edges: HashMap<String, Vec<Edge>>,
+    pub(crate) nodes: SortedVec<NodeIR>,
+    pub(crate) edges: BTreeMap<NodeID, Vec<Edge>>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub(crate) struct Edge {
-    pub(crate) source: String,
-    pub(crate) target: String,
+    pub(crate) source: NodeID,
+    pub(crate) target: NodeID,
 }
 impl DAGIR {
     /// Creates a new DAGIR from a JSON configuration
@@ -56,8 +80,8 @@ impl DAGIR {
     /// Panics if integer conversion fails when processing numeric inputs
     pub fn from_json(json_config: &Value) -> Result<Self, String> {
         let start = Instant::now();
-        let mut nodes = Vec::new();
-        let mut edges: HashMap<String, Vec<Edge>> = HashMap::new();
+        let mut nodes = SortedVec::new();
+        let mut edges: BTreeMap<NodeID, Vec<Edge>> = BTreeMap::new();
 
         let array = json_config
             .as_array()
@@ -159,10 +183,7 @@ impl DAGIR {
     pub fn calculate_hash(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
 
-        let mut sorted_nodes = self.nodes.clone();
-        sorted_nodes.sort_by(|a, b| a.id.cmp(&b.id));
-
-        for node in &sorted_nodes {
+        for node in self.nodes.iter() {
             node.id.hash(&mut hasher);
             node.namespace.hash(&mut hasher);
             node.component_type.hash(&mut hasher);
@@ -170,10 +191,7 @@ impl DAGIR {
             node.inputs.hash(&mut hasher);
         }
 
-        let mut sorted_edges: Vec<_> = self.edges.iter().collect();
-        sorted_edges.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
-
-        for (target, edges) in sorted_edges {
+        for (target, edges) in &self.edges {
             target.hash(&mut hasher);
             let mut sorted_edges = edges.clone();
             sorted_edges.sort_by(|a, b| a.source.cmp(&b.source));
@@ -190,25 +208,25 @@ impl DAGIR {
 pub enum DAGError {
     /// Represents a type mismatch error.
     TypeMismatch {
-        node_id: String,
+        node_id: NodeID,
         expected: DataType,
         actual: DataType,
     },
     /// Represents a missing dependency output.
     MissingDependency {
-        node_id: String,
-        dependency_id: String,
+        node_id: NodeID,
+        dependency_id: NodeID,
     },
     /// Represents a runtime error during component execution.
-    ExecutionError { node_id: String, reason: String },
+    ExecutionError { node_id: NodeID, reason: String },
     /// Represents a node not found in the DAG.
-    NodeNotFound { node: String },
+    NodeNotFound { node: NodeID },
     /// Represents invalid configuration or setup.
     InvalidConfiguration(String),
     /// Represents a cycle detected in the DAG.
     CycleDetected,
     /// Represents no valid inputs for a node.
-    NoValidInputs { node_id: String, expected: DataType },
+    NoValidInputs { node_id: NodeID, expected: DataType },
     /// Represents a historical result not found
     HistoricalResultNotFound { request_id: String },
     /// Represents a type system failure.
@@ -314,13 +332,13 @@ impl Default for DAGConfig {
     }
 }
 
-pub type Notifiers = Arc<Mutex<HashMap<String, watch::Sender<()>>>>;
-pub type SharedResults = Arc<Mutex<IndexMap<String, Data>>>;
+pub type Notifiers = Arc<Mutex<HashMap<NodeID, watch::Sender<()>>>>;
+pub type SharedResults = Arc<Mutex<IndexMap<NodeID, Data>>>;
 
 pub struct DAG {
-    nodes: Arc<HashMap<String, Arc<dyn Component>>>,
-    edges: Arc<HashMap<String, Vec<Edge>>>,
-    initial_inputs: Arc<HashMap<String, Data>>,
+    nodes: Arc<HashMap<NodeID, Arc<dyn Component>>>,
+    edges: Arc<HashMap<NodeID, Vec<Edge>>>,
+    initial_inputs: Arc<HashMap<NodeID, Data>>,
     config: DAGConfig,
     cache: Option<Arc<Cache>>,
     ir_hash: u64,
@@ -337,21 +355,21 @@ impl DAG {
     /// - Component creation fails
     /// - Initial input types don't match component input types
     pub fn from_ir(
-        ir: DAGIR,
+        ir: &DAGIR,
         registry: &Registry,
         config: DAGConfig,
         cache: Option<Arc<Cache>>,
     ) -> Result<Self, String> {
         let ir_hash = ir.calculate_hash();
         let mut nodes = HashMap::new();
-        let mut edges: HashMap<String, Vec<Edge>> = HashMap::new();
+        let mut edges: HashMap<NodeID, Vec<Edge>> = HashMap::new();
         let mut initial_inputs = HashMap::new();
         let mut node_ids = HashSet::new();
 
         println!("DAGConfig: {config:?}");
 
         println!("Checking for duplicate node IDs");
-        for node in &ir.nodes {
+        for node in ir.nodes.iter() {
             if !node_ids.insert(node.id.clone()) {
                 return Err(format!("Duplicate node ID found: {}", node.id));
             }
@@ -359,7 +377,7 @@ impl DAG {
 
         println!("Registry: {registry:?}");
         println!("Creating components");
-        for node in ir.nodes {
+        for node in ir.nodes.iter() {
             let component = registry
                 .get_configured(&node.component_type, &node.config)
                 .map_err(|e| format!("Failed to get component for node {}: {}", node.id, e))?;
@@ -437,7 +455,7 @@ impl DAG {
     pub async fn execute(
         &self,
         request_id: Option<String>,
-    ) -> Result<IndexMap<String, Data>, DAGError> {
+    ) -> Result<IndexMap<NodeID, Data>, DAGError> {
         let start_time = Instant::now();
         let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
         println!(
@@ -490,10 +508,10 @@ impl DAG {
         Ok(final_results)
     }
 
-    fn compute_execution_order(&self, elapsed_secs: f32) -> Result<Vec<String>, DAGError> {
+    fn compute_execution_order(&self, elapsed_secs: f32) -> Result<Vec<NodeID>, DAGError> {
         println!("[{elapsed_secs:.2}s] Starting topological sort");
-        let mut in_degree: HashMap<String, usize> = HashMap::new();
-        let mut graph: HashMap<String, Vec<String>> = HashMap::new();
+        let mut in_degree: HashMap<NodeID, usize> = HashMap::new();
+        let mut graph: HashMap<NodeID, Vec<NodeID>> = HashMap::new();
 
         for node_id in self.nodes.keys() {
             graph.entry(node_id.clone()).or_default();
@@ -570,7 +588,7 @@ impl DAG {
         notifiers: Notifiers,
         shared_results: SharedResults,
         elapsed_secs: f32,
-    ) -> Result<IndexMap<String, Data>, DAGError> {
+    ) -> Result<IndexMap<NodeID, Data>, DAGError> {
         for node_id in &sorted_nodes {
             let (tx, _) = watch::channel(());
             notifiers.lock().unwrap().insert(node_id.clone(), tx);
@@ -606,7 +624,7 @@ impl DAG {
     #[allow(clippy::too_many_lines)]
     fn spawn_node_task(
         &self,
-        node_id: &str,
+        node_id: &NodeID,
         notifiers: &Notifiers,
         shared_results: &SharedResults,
         elapsed_secs: f32,
