@@ -283,22 +283,20 @@ pub trait Component: Send + Sync + 'static {
     fn input_type(&self) -> DataType;
 
     fn output_type(&self) -> DataType;
-
-    fn is_deferrable(&self) -> bool {
-        false
-    }
 }
+
+type ComponentType = String;
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 struct ComponentKey {
-    component_type: String,
+    component_type: ComponentType,
     config_hash: u64,
 }
 
-type RegisteredComponent = Arc<dyn Fn(Value) -> Arc<dyn Component> + Send + Sync>;
+type RegisteredComponentFactory = Arc<dyn Fn(Value) -> Arc<dyn Component> + Send + Sync>;
 
 pub struct Registry {
-    components: HashMap<String, RegisteredComponent>,
+    unconfigured_component_factories: HashMap<ComponentType, RegisteredComponentFactory>,
     configured_component_cache: Arc<RwLock<HashMap<ComponentKey, Arc<dyn Component>>>>,
 }
 
@@ -312,14 +310,14 @@ impl Registry {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            components: HashMap::new(),
+            unconfigured_component_factories: HashMap::new(),
             configured_component_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// Registers a new component type with the registry.
     pub fn register<C: Component + 'static>(&mut self, name: &str) {
-        self.components.insert(
+        self.unconfigured_component_factories.insert(
             name.to_string(),
             Arc::new(|config| Arc::new(C::configure(config)) as Arc<dyn Component>),
         );
@@ -348,7 +346,7 @@ impl Registry {
         }
 
         let factory = self
-            .components
+            .unconfigured_component_factories
             .get(name)
             .ok_or_else(|| Error::NotRegistered(name.to_string()))?;
 
@@ -367,8 +365,8 @@ impl Registry {
     /// Gets the raw component factory. This is primarily for internal use
     /// or advanced cases where you need to manage component configuration yourself.
     #[must_use]
-    pub fn get(&self, name: &str) -> Option<&RegisteredComponent> {
-        self.components.get(name)
+    pub fn get(&self, name: &str) -> Option<&RegisteredComponentFactory> {
+        self.unconfigured_component_factories.get(name)
     }
 
     // Add this helper method
@@ -383,8 +381,8 @@ impl std::fmt::Debug for Registry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Registry")
             .field(
-                "registered_components",
-                &self.components.keys().collect::<Vec<_>>(),
+                "unconfigured_component_factories",
+                &self.unconfigured_component_factories.keys().collect::<Vec<_>>(),
             )
             .field(
                 "configured_component_cache",
