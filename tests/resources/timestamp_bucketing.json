@@ -16,11 +16,19 @@
           }
         ",
         "validation_data": {
-          "timestamps": [
-            "2024-01-01T00:00:00Z",
-            "2023-12-25T00:00:00Z",
-            "2023-01-01T00:00:00Z"
-          ]
+          "input": {
+            "timestamps": [
+              "2024-01-01T00:00:00Z",
+              "2023-12-25T00:00:00Z",
+              "2023-01-01T00:00:00Z"
+            ]
+          },
+          "expected_output": {
+            "today": [],
+            "last_week": [],
+            "last_year": []
+          },
+          "structure_only": true
         }
       },
       "inputs": {

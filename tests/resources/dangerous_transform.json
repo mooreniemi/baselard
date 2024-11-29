@@ -13,11 +13,16 @@
                 }
             ",
             "validation_data": {
-                "test": "some value"
+                "input": {
+                    "test": "some value"
+                },
+                "expected_output": {
+                    "infinite_result": "we will time this out"
+                }
             }
         },
         "inputs": {
             "test": "trigger infinite recursion"
         }
     }
- ]
+]

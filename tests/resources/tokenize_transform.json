@@ -8,7 +8,12 @@
                 { original: .text, tokens: .text | tokenize }
             ",
             "validation_data": {
-                "text": "hello world test"
+                "input": {
+                    "text": "hello world test"
+                },
+                "expected_output": {
+                    "tokens": ["hello", "world", "test"]
+                }
             }
         },
         "inputs": {

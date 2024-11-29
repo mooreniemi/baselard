@@ -17,7 +17,14 @@ async fn test_basic_transformation() {
         "id": "transform1",
         "component_type": "PayloadTransformer",
         "config": {
-            "transformation_expression": ".message"
+            "transformation_expression": ".message",
+            "validation_data": {
+                "input": {
+                    "message": "test message",
+                    "extra": "ignored"
+                },
+                "expected_output": "test message"
+            }
         },
         "inputs": {
             "message": "Hello, World!",
@@ -44,7 +51,11 @@ async fn test_invalid_jq_expression() {
         "id": "transform1",
         "component_type": "PayloadTransformer",
         "config": {
-            "transformation_expression": "invalid[expression"
+            "transformation_expression": "invalid[expression",
+            "validation_data": {
+                "input": {"test": "data"},
+                "expected_output": "data"
+            }
         },
         "inputs": {"test": "data"}
     }]);
@@ -73,7 +84,17 @@ async fn test_chained_transformations() {
             "id": "transform1",
             "component_type": "PayloadTransformer",
             "config": {
-                "transformation_expression": "{message: .message, count: (.count + 1)}"
+                "transformation_expression": "{message: .message, count: (.count + 1)}",
+                "validation_data": {
+                    "input": {
+                        "message": "test",
+                        "count": 0
+                    },
+                    "expected_output": {
+                        "message": "test",
+                        "count": 1
+                    }
+                }
             },
             "inputs": {
                 "message": "Hello",
@@ -84,7 +105,13 @@ async fn test_chained_transformations() {
             "id": "transform2",
             "component_type": "PayloadTransformer",
             "config": {
-                "transformation_expression": ".message + \" World!\""
+                "transformation_expression": ".message + \" World!\"",
+                "validation_data": {
+                    "input": {
+                        "message": "test"
+                    },
+                    "expected_output": "test World!"
+                }
             },
             "depends_on": ["transform1"]
         }
@@ -114,7 +141,11 @@ async fn test_non_json_input() {
         "id": "transform1",
         "component_type": "PayloadTransformer",
         "config": {
-            "transformation_expression": "."
+            "transformation_expression": ".",
+            "validation_data": {
+                "input": 42,
+                "expected_output": 42
+            }
         },
         "inputs": 42  // Integer instead of JSON
     }]);
@@ -138,7 +169,12 @@ async fn test_default_identity_transform() {
     let json_config = json!([{
         "id": "transform1",
         "component_type": "PayloadTransformer",
-        "config": {},  // No expression provided, should default to "."
+        "config": {
+            "validation_data": {
+                "input": {"test": "data"},
+                "expected_output": {"test": "data"}
+            }
+        },  // No expression provided, should default to "."
         "inputs": {"test": "data"}
     }]);
 

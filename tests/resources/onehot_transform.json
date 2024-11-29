@@ -24,7 +24,13 @@
                 }
             ",
             "validation_data": {
-                "values": ["test1", "test2", "test1"]
+                "input": {
+                    "values": ["test1", "test2", "test1"]
+                },
+                "expected_output": {
+                    "unique_categories": ["test1", "test2"],
+                    "one_hot_encoded": [[1,0], [0,1], [1,0]]
+                }
             }
         },
         "inputs": {

@@ -15,10 +15,21 @@
         }))
       }",
       "validation_data": {
-        "items": [
-          {"name": "Test1", "price": 100, "category": "A"},
-          {"name": "Test2", "price": 10, "category": "B"}
-        ]
+        "input": {
+          "items": [
+            {"name": "Test1", "price": 100, "category": "A"},
+            {"name": "Test2", "price": 10, "category": "B"}
+          ]
+        },
+        "expected_output": {
+          "item_count": 2,
+          "total_price": 110,
+          "expensive_items": ["Test1"],
+          "categories": [
+            {"category": "A", "count": 1, "avg_price": 100},
+            {"category": "B", "count": 1, "avg_price": 10}
+          ]
+        }
       }
     },
     "inputs": {
