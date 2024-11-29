@@ -25,7 +25,7 @@ Baselard is a library for building and executing directed acyclic graphs (DAGs) 
 
 To try a complex transform (if you have `cargo run --example serving` running),
 
-```
+```shell
 curl -s -X POST http://localhost:3000/execute \
   -H "Content-Type: application/json" \
   -d @tests/resources/complex_transform.json
@@ -33,7 +33,7 @@ curl -s -X POST http://localhost:3000/execute \
 
 You can also turn the cache off by adding `"cache": "no-cache"` to the request.
 
-```
+```shell
 curl -s -X POST http://localhost:3000/execute \
   -H "Cache-Control: no-cache" \
   -H "Content-Type: application/json" \
@@ -53,6 +53,7 @@ Install these system dependencies:
 ```shell
 brew install flex
 brew install bison
+brew install libtool
 brew install automake
 ```
 
@@ -72,7 +73,7 @@ Now you can proceed with installing `libjq` from source as shown in the "Install
 
 On AL2 (Amazon Linux 2), you may run into the following error when trying to install `jq-rs` (both manualy from source or via the `bundled` feature flag):
 
-```
+```shell
 ❯ autoreconf
 configure.ac:6: error: require Automake 1.14, but have 1.13.4
 autoreconf: automake failed with exit status: 1
@@ -134,19 +135,19 @@ Finally uninstall any existing versions of libjq:
 sudo yum remove -y jq-devel
 ```
 
-Now you can proceed with installing `libjq` from source as shown in the "Install `libjq` from source" section below.
-
 Finally, set this environment variable to build libjq with the position independent code flag:
 
-```
+```shell
 export CFLAGS=-fPIC
 ```
 
 Without this flag, you will get a bunch of errors that look like this:
 
 ```
-          /usr/bin/ld: /.../baselard/target/debug/deps/libjq_sys-68c04a110255c875.rlib(unicode_fold3_key.o): relocation R_X86_64_32S against `.rodata' can not be used when making a shared object; recompile with -fPIC
+/usr/bin/ld: /.../baselard/target/debug/deps/libjq_sys-68c04a110255c875.rlib(unicode_fold3_key.o): relocation R_X86_64_32S against `.rodata' can not be used when making a shared object; recompile with -fPIC
 ```
+
+Now you can proceed with installing `libjq` from source as shown in the "Install `libjq` from source" section below.
 
 #### Install `libjq` from source
 
