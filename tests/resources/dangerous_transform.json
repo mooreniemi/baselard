@@ -1,0 +1,23 @@
+[
+    {
+        "id": "infinite_recursion",
+        "component_type": "PayloadTransformer",
+        "config": {
+            "transformation_expression": "
+                def infinite_recurse:
+                    . | infinite_recurse;
+
+                {
+                    original: .,
+                    infinite_result: infinite_recurse
+                }
+            ",
+            "validation_data": {
+                "test": "some value"
+            }
+        },
+        "inputs": {
+            "test": "trigger infinite recursion"
+        }
+    }
+ ]

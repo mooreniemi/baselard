@@ -1,30 +1,18 @@
 [
     {
-        "id": "one_hot_encode_categories",
+        "id": "tokenize_text",
         "component_type": "PayloadTransformer",
         "config": {
             "transformation_expression": "
-                def unique_categories: unique;
-
-                def one_hot_encode:
-                    unique_categories as $unique |
-                    map(
-                        . as $item |
-                        $unique |
-                        map(
-                            if . == $item then 1 else 0 end
-                        )
-                    );
-
-                {
-                    original: .,
-                    unique_categories: unique_categories,
-                    one_hot_encoded: one_hot_encode
-                }
-            "
+                def tokenize: split(\" \");
+                { original: .text, tokens: .text | tokenize }
+            ",
+            "validation_data": {
+                "text": "hello world test"
+            }
         },
         "inputs": {
-            "categories": ["apple", "banana", "apple", "cherry", "banana"]
+            "text": "The quick brown fox jumps over the lazy dog"
         }
     }
 ]
