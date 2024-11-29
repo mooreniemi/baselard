@@ -302,7 +302,6 @@ pub struct Registry {
     configured_component_cache: Arc<RwLock<HashMap<ComponentKey, Arc<dyn Component>>>>,
 }
 
-
 impl Default for Registry {
     fn default() -> Self {
         Self::new()
@@ -330,8 +329,8 @@ impl Registry {
     /// This is the preferred method for getting components during DAG execution.
     ///
     /// # Errors
-    /// Returns `ComponentError::NotRegistered` if the component type is not registered.
-    /// Returns `ComponentError::CacheError` if there's an error accessing the cache.
+    /// Returns `component::Error::NotRegistered` if the component type is not registered.
+    /// Returns `component::Error::CacheError` if there's an error accessing the cache.
     pub fn get_configured(&self, name: &str, config: &Value) -> Result<Arc<dyn Component>, Error> {
         let config_hash = Self::calculate_config_hash(config);
         let key = ComponentKey {
@@ -391,7 +390,7 @@ impl std::fmt::Debug for Registry {
                 "configured_component_cache",
                 &self.configured_component_cache.read().unwrap().len(),
             )
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -408,7 +407,6 @@ impl std::fmt::Display for Error {
                 write!(f, "Component type '{name}' not registered")
             }
             Error::CacheError(msg) => write!(f, "Component cache error: {msg}"),
-
         }
     }
 }

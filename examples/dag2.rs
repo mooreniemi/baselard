@@ -133,9 +133,7 @@ async fn main() {
     let start_time = Instant::now();
     let sorted_components = topological_sort(&components);
     let elapsed = start_time.elapsed().as_secs_f32();
-    println!(
-        "[{elapsed:.2}s] Topological sort: {sorted_components:?}"
-    );
+    println!("[{elapsed:.2}s] Topological sort: {sorted_components:?}");
 
     let notifiers: Arc<Mutex<HashMap<String, watch::Sender<()>>>> =
         Arc::new(Mutex::new(HashMap::new()));

@@ -14,9 +14,9 @@ use baselard::{
     dag::{DAGConfig, DAGError, DAG, DAGIR},
 };
 use serde_json::{json, Value};
-use tracing::warn;
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::warn;
 
 #[derive(Debug)]
 struct Multiplier {
@@ -53,7 +53,7 @@ impl Component for Multiplier {
                     warn!("Multiplier received unparseable JSON value: {value:?}");
                     0.0
                 }
-            },
+            }
             _ => {
                 return Err(DAGError::TypeSystemFailure {
                     component: "Multiplier".to_string(),
