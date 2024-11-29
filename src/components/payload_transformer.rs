@@ -30,7 +30,7 @@ impl Component for PayloadTransformer {
     /// Additionally, jq is Turing complete, and so it is possible for someone to write an infinite loop.
     /// To validate that the program is not infinite, we run it with a timeout once before compiling.
     /// We need to run validation as a separate process because you can't kill the thread and clean up the
-    /// C resources that were allocated.
+    /// C resources that were allocated. Validation cost is paid only once: when configuration happens.
     fn configure(config: Value) -> Self {
         let expression = config["transformation_expression"]
             .as_str()
@@ -43,44 +43,48 @@ impl Component for PayloadTransformer {
         )
         .expect("Failed to parse max_programs_per_thread");
 
-        // FIXME: make this required everywhere for safety
-        if let Some(validation_data) = config.get("validation_data") {
-            // Try gtimeout first (macOS with coreutils), fall back to timeout (Linux)
-            let mut child = Command::new("gtimeout")
-                .arg(VALIDATION_TIMEOUT.to_string())
-                .arg("jq")
-                .arg(&expression)
-                .stdin(std::process::Stdio::piped())
-                .spawn()
-                .or_else(|_| {
-                    Command::new("timeout")
-                        .arg(VALIDATION_TIMEOUT.to_string())
-                        .arg("jq")
-                        .arg(&expression)
-                        .stdin(std::process::Stdio::piped())
-                        .spawn()
-                })
-                .expect("Failed to spawn command");
+        // Require validation_data
+        let validation_data = config.get("validation_data")
+            .expect("validation_data is required for PayloadTransformer");
 
-            if let Some(mut stdin) = child.stdin.take() {
-                use std::io::Write;
-                stdin.write_all(validation_data.to_string().as_bytes()).expect("Failed to write to stdin");
-                drop(stdin);
-            }
+        let validation_json = serde_json::to_string(validation_data)
+            .expect("Failed to serialize validation data");
 
-            let output = child.wait_with_output().expect("Failed to read command output");
-            if !output.status.success() {
-                let error = String::from_utf8_lossy(&output.stderr);
-                let timeout_error = output.status.code() == Some(124);
-                panic!(
-                    "JQ program validation failed: {}",
-                    if timeout_error {
-                        "Program timed out (possible infinite loop)"
-                    } else {
-                        &error
-                    }
-                );
-            }
+        let mut child = Command::new("gtimeout")
+            .arg(VALIDATION_TIMEOUT.to_string())
+            .arg("jq")
+            .arg(&expression)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .or_else(|_| {
+                Command::new("timeout")
+                    .arg(VALIDATION_TIMEOUT.to_string())
+                    .arg("jq")
+                    .arg(&expression)
+                    .stdin(std::process::Stdio::piped())
+                    .spawn()
+            })
+            .expect("Failed to spawn command");
+
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            stdin.write_all(validation_json.as_bytes()).expect("Failed to write to stdin");
+            drop(stdin);
+        }
+
+        let output = child.wait_with_output().expect("Failed to read command output");
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr);
+            let timeout_error = output.status.code() == Some(124);
+            panic!(
+                "JQ program ({}) validation failed: {}",
+                expression,
+                if timeout_error {
+                    "Program timed out (possible infinite loop)"
+                } else {
+                    &error
+                }
+            );
         }
 
         // If we get here, either validation passed or wasn't requested
