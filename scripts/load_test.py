@@ -10,12 +10,14 @@ from datetime import datetime
 from statistics import mean, median
 
 
-async def send_request(session, payload, url="http://localhost:3000/execute", enable_cache=True):
+async def send_request(
+    session, payload, url="http://localhost:3000/execute", enable_cache=True
+):
     """Send a single request to the server and measure response time."""
     start_time = datetime.now()
     headers = {}
     if not enable_cache:
-        headers['Cache-Control'] = 'no-cache'
+        headers["Cache-Control"] = "no-cache"
 
     try:
         async with session.post(url, json=payload, headers=headers) as response:
@@ -38,11 +40,15 @@ async def send_request(session, payload, url="http://localhost:3000/execute", en
         }
 
 
-async def load_test(concurrent_users, requests_per_user, exclude_dangerous=True, enable_cache=True):
+async def load_test(
+    concurrent_users, requests_per_user, exclude_dangerous=True, enable_cache=True
+):
     """Run load test with specified number of concurrent users and requests."""
     # Load all JSON files from tests/resources
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    json_files = glob.glob(os.path.join(base_dir, "tests", "resources", "**", "*.json"), recursive=True)
+    json_files = glob.glob(
+        os.path.join(base_dir, "tests", "resources", "**", "*.json"), recursive=True
+    )
 
     if not json_files:
         print("Error: No JSON files found!")
@@ -58,12 +64,12 @@ async def load_test(concurrent_users, requests_per_user, exclude_dangerous=True,
             continue
 
         try:
-            with open(file_path, "r", encoding='utf-8-sig') as f:
+            with open(file_path, "r", encoding="utf-8-sig") as f:
                 content = f.read()
                 # Replace common control characters
-                content = (content.replace('\r', '')
-                                .replace('\n', ' ')
-                                .replace('\t', ' '))
+                content = (
+                    content.replace("\r", "").replace("\n", " ").replace("\t", " ")
+                )
                 payload = json.loads(content)
                 payloads.append((os.path.basename(file_path), payload))
                 print(f"Loaded test file: {os.path.basename(file_path)}")
@@ -82,9 +88,9 @@ async def load_test(concurrent_users, requests_per_user, exclude_dangerous=True,
     # Configure connection pooling
     connector = aiohttp.TCPConnector(
         limit=concurrent_users,  # Max connections
-        force_close=False,       # Keep connections alive
+        force_close=False,  # Keep connections alive
         enable_cleanup_closed=True,
-        ttl_dns_cache=300,      # Cache DNS lookups
+        ttl_dns_cache=300,  # Cache DNS lookups
     )
 
     async with aiohttp.ClientSession(connector=connector) as session:
@@ -141,12 +147,14 @@ def main():
     EXCLUDE_DANGEROUS = True
     ENABLE_CACHE = False
 
-    asyncio.run(load_test(
-        CONCURRENT_USERS,
-        REQUESTS_PER_USER,
-        exclude_dangerous=EXCLUDE_DANGEROUS,
-        enable_cache=ENABLE_CACHE
-    ))
+    asyncio.run(
+        load_test(
+            CONCURRENT_USERS,
+            REQUESTS_PER_USER,
+            exclude_dangerous=EXCLUDE_DANGEROUS,
+            enable_cache=ENABLE_CACHE,
+        )
+    )
 
 
 if __name__ == "__main__":

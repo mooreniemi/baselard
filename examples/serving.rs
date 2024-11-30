@@ -16,7 +16,6 @@ use baselard::{
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::warn;
 
 #[derive(Debug)]
 struct Multiplier {
@@ -51,7 +50,7 @@ impl Component for Multiplier {
                 } else if let Some(text) = value.as_str() {
                     text.parse::<f64>().unwrap_or(0.0)
                 } else {
-                    warn!("Multiplier received unparseable JSON value: {value:?}");
+                    println!("Multiplier received unparseable JSON value: {value:?}");
                     0.0
                 }
             }
