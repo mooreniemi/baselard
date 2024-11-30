@@ -14,26 +14,44 @@ async def send_request(
     session, payload, url="http://localhost:3000/execute", enable_cache=True
 ):
     """Send a single request to the server and measure response time."""
-    start_time = datetime.now()
-    headers = {}
+    headers = {
+        "Connection": "keep-alive",
+        "Content-Type": "application/json",
+        "Keep-Alive": "timeout=120",
+    }
     if not enable_cache:
         headers["Cache-Control"] = "no-cache"
 
+    start_time = datetime.now()
     try:
-        async with session.post(url, json=payload, headers=headers) as response:
+        connect_start = datetime.now()
+        async with session.post(
+            url, json=payload, headers=headers, raise_for_status=True
+        ) as response:
+            connect_time = (datetime.now() - connect_start).total_seconds() * 1000
+
+            read_start = datetime.now()
             response_data = await response.json()
-            duration = (datetime.now() - start_time).total_seconds() * 1000  # ms
+            read_time = (datetime.now() - read_start).total_seconds() * 1000
+
+            total_duration = (datetime.now() - start_time).total_seconds() * 1000
+
             return {
                 "status": response.status,
-                "duration": duration,
+                "duration": total_duration,
+                "connect_time": connect_time,
+                "read_time": read_time,
                 "server_duration": response_data.get("took_ms", 0),
                 "success": response_data.get("success", False),
                 "error": response_data.get("error", None),
             }
     except Exception as e:
+        duration = (datetime.now() - start_time).total_seconds() * 1000
         return {
             "status": 0,
-            "duration": 0,
+            "duration": duration,
+            "connect_time": 0,
+            "read_time": 0,
             "server_duration": 0,
             "success": False,
             "error": str(e),
@@ -85,23 +103,35 @@ async def load_test(
     print(f"- {requests_per_user} requests per user")
     print(f"- {len(payloads)} different payloads")
 
-    # Configure connection pooling
+    # Modify connector settings to be more aggressive with connection reuse
     connector = aiohttp.TCPConnector(
-        limit=concurrent_users,  # Max connections
-        force_close=False,  # Keep connections alive
+        limit=concurrent_users,
+        force_close=False,
         enable_cleanup_closed=True,
-        ttl_dns_cache=300,  # Cache DNS lookups
+        ttl_dns_cache=300,
+        use_dns_cache=True,
+        keepalive_timeout=120,
+        limit_per_host=concurrent_users,
     )
 
-    async with aiohttp.ClientSession(connector=connector) as session:
+    timeout = aiohttp.ClientTimeout(total=30, connect=10)
+    async with aiohttp.ClientSession(
+        connector=connector,
+        timeout=timeout,
+        json_serialize=json.dumps,
+    ) as session:
+        # Execute requests in batches per user
         results = []
-        tasks = []
-        for _ in range(concurrent_users):
+        for _user_id in range(concurrent_users):
+            user_tasks = []
             for _ in range(requests_per_user):
                 _file_name, payload = random.choice(payloads)
-                tasks.append(send_request(session, payload, enable_cache=enable_cache))
-
-        results = await asyncio.gather(*tasks)
+                user_tasks.append(
+                    send_request(session, payload, enable_cache=enable_cache)
+                )
+            # Execute each user's requests sequentially but different users concurrently
+            user_results = await asyncio.gather(*user_tasks)
+            results.extend(user_results)
 
     # Analyze results
     successful_requests = [r for r in results if r["success"]]
@@ -115,6 +145,18 @@ async def load_test(
     print(f"Failed requests: {len(failed_requests)}")
 
     if client_durations:
+        print("\nDetailed timing statistics (ms):")
+        connect_times = [r["connect_time"] for r in successful_requests]
+        read_times = [r["read_time"] for r in successful_requests]
+
+        print(f"\nConnection timing:")
+        print(f"Mean connect time: {mean(connect_times):.2f}")
+        print(f"Median connect time: {median(connect_times):.2f}")
+
+        print(f"\nResponse reading timing:")
+        print(f"Mean read time: {mean(read_times):.2f}")
+        print(f"Median read time: {median(read_times):.2f}")
+
         print(f"\nClient-side timing statistics (ms):")
         print(f"Mean response time: {mean(client_durations):.2f}")
         print(f"Median response time: {median(client_durations):.2f}")
