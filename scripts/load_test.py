@@ -8,6 +8,7 @@ import glob
 import os
 from datetime import datetime
 from statistics import mean, median
+import argparse
 
 
 async def send_request(
@@ -183,18 +184,58 @@ async def load_test(
 
 
 def main():
-    # Test parameters
-    CONCURRENT_USERS = 10
-    REQUESTS_PER_USER = 50
-    EXCLUDE_DANGEROUS = True
-    ENABLE_CACHE = False
+    """
+    Example usage:
+        # Use defaults (10 users, 50 requests each)
+        python scripts/load_test.py
+
+        # Custom configuration
+        python scripts/load_test.py --users 20 --requests 100
+
+        # Disable caching and allow dangerous tests
+        python scripts/load_test.py --disable-cache --allow-dangerous
+
+        # Test against a different server
+        python scripts/load_test.py --url http://localhost:3000/execute
+    """
+    parser = argparse.ArgumentParser(description='Load test for the DAG execution server')
+    parser.add_argument(
+        '--users',
+        type=int,
+        default=10,
+        help='Number of concurrent users (default: 10)'
+    )
+    parser.add_argument(
+        '--requests',
+        type=int,
+        default=50,
+        help='Number of requests per user (default: 50)'
+    )
+    parser.add_argument(
+        '--allow-dangerous',
+        action='store_true',
+        help='Include dangerous transform tests'
+    )
+    parser.add_argument(
+        '--disable-cache',
+        action='store_true',
+        help='Disable server-side caching'
+    )
+    parser.add_argument(
+        '--url',
+        type=str,
+        default='http://localhost:3000/execute',
+        help='Server URL (default: http://localhost:3000/execute)'
+    )
+
+    args = parser.parse_args()
 
     asyncio.run(
         load_test(
-            CONCURRENT_USERS,
-            REQUESTS_PER_USER,
-            exclude_dangerous=EXCLUDE_DANGEROUS,
-            enable_cache=ENABLE_CACHE,
+            concurrent_users=args.users,
+            requests_per_user=args.requests,
+            exclude_dangerous=not args.allow_dangerous,
+            enable_cache=not args.disable_cache,
         )
     )
 
