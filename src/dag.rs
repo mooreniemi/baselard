@@ -722,8 +722,14 @@ impl DAG {
                         &results_guard,
                         &initial_inputs,
                         &nodes.get(&node_id_for_blocking).unwrap().input_type(),
+                        start_time,
                     )?
                 };
+                println!(
+                    "[{:.2}s] Prepared input data for node {}",
+                    start_time.elapsed().as_secs_f32(),
+                    node_id_for_blocking
+                );
 
                 let component = nodes.get(&node_id_for_blocking).unwrap();
                 let output = component.execute(input_data)?;
@@ -797,8 +803,12 @@ impl DAG {
         results: &IndexMap<String, Data>,
         initial_inputs: &HashMap<String, Data>,
         expected_type: &DataType,
+        start_time: Instant,
     ) -> Result<Data, DAGError> {
-        println!("Preparing input data for node {node_id}");
+        println!(
+            "[{:.2}s] Preparing input data for node {node_id}",
+            start_time.elapsed().as_secs_f32()
+        );
 
         if !edges.is_empty() {
             let mut valid_inputs = Vec::new();
