@@ -518,7 +518,7 @@ impl DAG {
                 sorted_nodes,
                 notifiers,
                 shared_results,
-                start_time.elapsed().as_secs_f32(),
+                start_time,
             )
             .await?;
 
@@ -617,7 +617,7 @@ impl DAG {
         sorted_nodes: Vec<String>,
         notifiers: Notifiers,
         shared_results: SharedResults,
-        elapsed_secs: f32,
+        start_time: Instant,
     ) -> Result<IndexMap<NodeID, Data>, DAGError> {
         for node_id in &sorted_nodes {
             let (tx, _) = watch::channel(());
@@ -626,7 +626,7 @@ impl DAG {
 
         println!(
             "[{:.2}s] Spawning tasks for {} nodes",
-            elapsed_secs,
+            start_time.elapsed().as_secs_f32(),
             sorted_nodes.len()
         );
 
@@ -634,11 +634,12 @@ impl DAG {
         for node_id in sorted_nodes {
             handles.push((
                 node_id.clone(),
-                self.spawn_node_task(&node_id, &notifiers, &shared_results, elapsed_secs)
+                self.spawn_node_task(&node_id, &notifiers, &shared_results, start_time)
             ));
         }
 
-        println!("[{elapsed_secs:.2}s] Waiting for all tasks to complete");
+        println!("[{:.2}s] Waiting for all tasks to complete",
+            start_time.elapsed().as_secs_f32());
 
         for (node_id, handle) in handles {
             handle.await.map_err(|e| DAGError::ExecutionError {
@@ -648,7 +649,8 @@ impl DAG {
         }
 
         let final_results = (*shared_results.lock().unwrap()).clone();
-        println!("[{elapsed_secs:.2}s] All tasks completed");
+        println!("[{:.2}s] All tasks completed",
+            start_time.elapsed().as_secs_f32());
         println!("Final results: {final_results:?}");
 
         Ok(final_results)
@@ -660,7 +662,7 @@ impl DAG {
         node_id: &NodeID,
         notifiers: &Notifiers,
         shared_results: &SharedResults,
-        elapsed_secs: f32,
+        start_time: Instant,
     ) -> tokio::task::JoinHandle<Result<(), DAGError>> {
         let node_id = node_id.to_string();
         let notifiers = Arc::clone(notifiers);
@@ -683,12 +685,11 @@ impl DAG {
         let node_id_for_async = node_id.clone();
         let shared_results_for_async = Arc::clone(&shared_results);
         let notifiers_for_async = Arc::clone(&notifiers);
-        let start_time = Instant::now();
 
         tokio::spawn(async move {
             println!(
                 "[{:.2}s] Starting task for node {}",
-                elapsed_secs + start_time.elapsed().as_secs_f32(),
+                start_time.elapsed().as_secs_f32(),
                 node_id_for_async
             );
 
@@ -703,7 +704,7 @@ impl DAG {
 
             println!(
                 "[{:.2}s] Node {} dependencies satisfied, executing",
-                elapsed_secs + start_time.elapsed().as_secs_f32(),
+                start_time.elapsed().as_secs_f32(),
                 node_id_for_async
             );
 
@@ -753,7 +754,7 @@ impl DAG {
                 Ok((id, output)) => {
                     println!(
                         "[{:.2}s] Node {} completed successfully",
-                        elapsed_secs + start_time.elapsed().as_secs_f32(),
+                        start_time.elapsed().as_secs_f32(),
                         id
                     );
                     shared_results_for_async
@@ -768,7 +769,7 @@ impl DAG {
                 Err(DAGError::ExecutionError { reason, .. }) => {
                     println!(
                         "[{:.2}s] Node {} failed: {:?}",
-                        elapsed_secs + start_time.elapsed().as_secs_f32(),
+                        start_time.elapsed().as_secs_f32(),
                         node_id_for_error,
                         reason
                     );
@@ -780,7 +781,7 @@ impl DAG {
                 Err(e) => {
                     println!(
                         "[{:.2}s] Node {} failed: {:?}",
-                        elapsed_secs + start_time.elapsed().as_secs_f32(),
+                        start_time.elapsed().as_secs_f32(),
                         node_id_for_error,
                         e
                     );
