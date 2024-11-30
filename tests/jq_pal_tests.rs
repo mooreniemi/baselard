@@ -33,7 +33,7 @@ async fn test_basic_transformation() {
     }]);
 
     let dag = DAGIR::from_json(&json_config)
-        .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None))
+        .and_then(|ir| DAG::from_ir(&ir, &registry, DAGConfig::default(), None))
         .expect("Valid DAG");
 
     let results = dag.execute(None).await.expect("Execution success");
@@ -61,7 +61,7 @@ async fn test_invalid_jq_expression() {
     }]);
 
     let result = DAGIR::from_json(&json_config)
-        .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None));
+        .and_then(|ir| DAG::from_ir(&ir, &registry, DAGConfig::default(), None));
 
     assert!(
         result.is_err(),
@@ -118,7 +118,7 @@ async fn test_chained_transformations() {
     ]);
 
     let dag = DAGIR::from_json(&json_config)
-        .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None))
+        .and_then(|ir| DAG::from_ir(&ir, &registry, DAGConfig::default(), None))
         .expect("Valid DAG");
 
     let results = dag.execute(None).await.expect("Execution success");
@@ -151,7 +151,7 @@ async fn test_non_json_input() {
     }]);
 
     let result = DAGIR::from_json(&json_config)
-        .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None));
+        .and_then(|ir| DAG::from_ir(&ir, &registry, DAGConfig::default(), None));
 
     assert!(result.is_err(), "Non-JSON input should fail DAG validation");
     assert!(
@@ -179,7 +179,7 @@ async fn test_default_identity_transform() {
     }]);
 
     let dag = DAGIR::from_json(&json_config)
-        .and_then(|ir| DAG::from_ir(ir, &registry, DAGConfig::default(), None))
+        .and_then(|ir| DAG::from_ir(&ir, &registry, DAGConfig::default(), None))
         .expect("Valid DAG");
 
     let results = dag.execute(None).await.expect("Execution success");

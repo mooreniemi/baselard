@@ -111,7 +111,7 @@ async fn execute_dag(
             }
 
             match DAG::from_ir(
-                ir,
+                &ir,
                 &state.registry,
                 dag_config,
                 Some(Arc::clone(&state.cache)),

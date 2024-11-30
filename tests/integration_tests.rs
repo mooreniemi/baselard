@@ -68,7 +68,7 @@ async fn test_optimal_makespan() {
     let dag_config = DAGConfig::cache_off();
 
     let start = std::time::Instant::now();
-    let dag = DAG::from_ir(dag_ir, &registry, dag_config, None).expect("Valid DAG");
+    let dag = DAG::from_ir(&dag_ir, &registry, dag_config, None).expect("Valid DAG");
     let results = dag.execute(None).await.expect("Execution success");
     let duration = start.elapsed();
     assert!(
@@ -100,7 +100,7 @@ async fn test_simple_seq_adds_up() {
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
-    let dag = DAG::from_ir(dag_ir, &registry, dag_config, None).expect("Valid DAG");
+    let dag = DAG::from_ir(&dag_ir, &registry, dag_config, None).expect("Valid DAG");
     let results = dag.execute(None).await.expect("Execution success");
     assert_eq!(results.len(), 2);
     assert_eq!(
@@ -212,7 +212,7 @@ async fn test_complex_dag_execution() {
         Data::Text("Success!".to_string()),
     );
 
-    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
+    match DAG::from_ir(&dag_ir, &registry, dag_config, None) {
         Ok(dag) => match dag.execute(None).await {
             Ok(results) => {
                 let results_vec: Vec<_> = results.into_iter().collect();
@@ -268,7 +268,7 @@ async fn test_dag_execution_with_errors() {
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
-    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
+    match DAG::from_ir(&dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
             if let Err(err) = dag.execute(None).await {
                 println!("Execution error: {err}");
@@ -309,7 +309,7 @@ async fn test_dag_execution_with_timeout() {
 
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
 
-    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
+    match DAG::from_ir(&dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
             if let Err(err) = dag.execute(None).await {
                 println!("Execution error: {err}");
@@ -353,7 +353,7 @@ async fn test_dag_cycle_detection() {
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
-    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
+    match DAG::from_ir(&dag_ir, &registry, dag_config, None) {
         Ok(dag) => match dag.execute(None).await {
             Ok(_) => panic!("Expected cycle detection error"),
             Err(err) => {
@@ -379,7 +379,7 @@ async fn test_dag_empty_graph() {
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
-    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
+    match DAG::from_ir(&dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
             let result = dag.execute(None).await;
             assert!(result.is_ok(), "Empty DAG should execute successfully");
@@ -406,7 +406,7 @@ async fn test_dag_invalid_component_type() {
     let dag_config = DAGConfig::cache_off();
 
     assert!(
-        DAG::from_ir(dag_ir, &registry, dag_config, None).is_err(),
+        DAG::from_ir(&dag_ir, &registry, dag_config, None).is_err(),
         "Expected error for invalid component type"
     );
 }
@@ -428,7 +428,7 @@ async fn test_dag_invalid_dependency() {
     let dag_config = DAGConfig::cache_off();
 
     assert!(
-        DAG::from_ir(dag_ir, &registry, dag_config, None).is_err(),
+        DAG::from_ir(&dag_ir, &registry, dag_config, None).is_err(),
         "Expected error for invalid dependency"
     );
 }
@@ -456,7 +456,7 @@ async fn test_dag_duplicate_node_ids() {
     let dag_config = DAGConfig::cache_off();
 
     assert!(
-        DAG::from_ir(dag_ir, &registry, dag_config, None).is_err(),
+        DAG::from_ir(&dag_ir, &registry, dag_config, None).is_err(),
         "Expected error for duplicate node IDs"
     );
 }
@@ -523,7 +523,7 @@ async fn test_dag_large_parallel_execution() {
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
-    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
+    match DAG::from_ir(&dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
             let start = std::time::Instant::now();
             let result = dag.execute(None).await;
@@ -568,7 +568,7 @@ async fn test_dag_cleanup_on_failure() {
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
 
-    match DAG::from_ir(dag_ir, &registry, dag_config, None) {
+    match DAG::from_ir(&dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
             let result = dag.execute(None).await;
             assert!(result.is_err(), "Expected execution to fail");
@@ -607,7 +607,7 @@ async fn test_dag_with_caching() {
     let dag_config = DAGConfig::default();
 
     let dag =
-        DAG::from_ir(dag_ir, &registry, dag_config, Some(Arc::clone(&cache))).expect("Valid DAG");
+        DAG::from_ir(&dag_ir, &registry, dag_config, Some(Arc::clone(&cache))).expect("Valid DAG");
 
     let request_id = "test-run-1".to_string();
     let results = dag
@@ -670,7 +670,7 @@ async fn test_dag_replay() {
     let dag_config = DAGConfig::default(); // This enables history
 
     let dag =
-        DAG::from_ir(dag_ir, &registry, dag_config, Some(Arc::clone(&cache))).expect("Valid DAG");
+        DAG::from_ir(&dag_ir, &registry, dag_config, Some(Arc::clone(&cache))).expect("Valid DAG");
 
     // First execution
     let request_id = "replay-test-1".to_string();
