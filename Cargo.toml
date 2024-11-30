@@ -35,6 +35,7 @@ ascii_tree = "0.1"
 tempfile = "3"
 sorted-vec = { version = "0.8.5", features = ["serde"] }
 lazy_static = "1.4"
+spin_sleep = "1"
 
 [lib]
 name = "baselard"

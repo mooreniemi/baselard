@@ -489,7 +489,7 @@ impl DAG {
         let start_time = Instant::now();
         let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
         println!(
-            "[{:.2}s] Starting DAG execution with request_id: {}",
+            "[{:.3}s] Starting DAG execution with request_id: {}",
             start_time.elapsed().as_secs_f32(),
             request_id
         );
@@ -500,7 +500,7 @@ impl DAG {
                     cache.get_cached_result(self.ir_hash, &self.initial_inputs)
                 {
                     println!(
-                        "[{:.2}s] Cache hit! Returning cached result",
+                        "[{:.3}s] Cache hit! Returning cached result",
                         start_time.elapsed().as_secs_f32()
                     );
                     return Ok(cached_result.node_results);
@@ -532,14 +532,14 @@ impl DAG {
         }
 
         println!(
-            "[{:.2}s] DAG execution completed",
+            "[{:.3}s] DAG execution completed",
             start_time.elapsed().as_secs_f32()
         );
         Ok(final_results)
     }
 
     fn compute_execution_order(&self, elapsed_secs: f32) -> Result<Vec<NodeID>, DAGError> {
-        println!("[{elapsed_secs:.2}s] Starting topological sort");
+        println!("[{elapsed_secs:.3}s] Starting topological sort");
         let mut in_degree: HashMap<NodeID, usize> = HashMap::new();
         let mut graph: HashMap<NodeID, Vec<NodeID>> = HashMap::new();
 
@@ -585,7 +585,7 @@ impl DAG {
         }
 
         println!(
-            "[{elapsed_secs:.2}s] Topological sort complete. Execution order: {sorted_nodes:?}"
+            "[{elapsed_secs:.3}s] Topological sort complete. Execution order: {sorted_nodes:?}"
         );
 
         if sorted_nodes.len() != self.nodes.len() {
@@ -596,12 +596,12 @@ impl DAG {
     }
 
     fn setup_execution_state(&self, elapsed_secs: f32) -> (Notifiers, SharedResults) {
-        println!("[{elapsed_secs:.2}s] Setting up notification channels");
+        println!("[{elapsed_secs:.3}s] Setting up notification channels");
 
         let mut results = IndexMap::new();
         results.extend((*self.initial_inputs).clone());
         println!(
-            "[{:.2}s] Initialized with {} initial inputs",
+            "[{:.3}s] Initialized with {} initial inputs",
             elapsed_secs,
             self.initial_inputs.len()
         );
@@ -625,7 +625,7 @@ impl DAG {
         }
 
         println!(
-            "[{:.2}s] Spawning tasks for {} nodes",
+            "[{:.3}s] Spawning tasks for {} nodes",
             start_time.elapsed().as_secs_f32(),
             sorted_nodes.len()
         );
@@ -638,7 +638,7 @@ impl DAG {
             ));
         }
 
-        println!("[{:.2}s] Waiting for all tasks to complete",
+        println!("[{:.3}s] Waiting for all tasks to complete",
             start_time.elapsed().as_secs_f32());
 
         for (node_id, handle) in handles {
@@ -649,7 +649,7 @@ impl DAG {
         }
 
         let final_results = (*shared_results.lock().unwrap()).clone();
-        println!("[{:.2}s] All tasks completed",
+        println!("[{:.3}s] All tasks completed",
             start_time.elapsed().as_secs_f32());
         println!("Final results: {final_results:?}");
 
@@ -688,11 +688,12 @@ impl DAG {
 
         tokio::spawn(async move {
             println!(
-                "[{:.2}s] Starting task for node {}",
+                "[{:.3}s] Starting task for node {}",
                 start_time.elapsed().as_secs_f32(),
                 node_id_for_async
             );
 
+            let wait_start = Instant::now();
             for receiver in receivers.values_mut() {
                 if let Err(e) = receiver.changed().await {
                     return Err(DAGError::ExecutionError {
@@ -701,9 +702,15 @@ impl DAG {
                     });
                 }
             }
+            println!(
+                "[{:.3}s] Node {} waited {:.3}s for dependencies",
+                start_time.elapsed().as_secs_f32(),
+                node_id_for_async,
+                wait_start.elapsed().as_secs_f32()
+            );
 
             println!(
-                "[{:.2}s] Node {} dependencies satisfied, executing",
+                "[{:.3}s] Node {} dependencies satisfied, executing",
                 start_time.elapsed().as_secs_f32(),
                 node_id_for_async
             );
@@ -726,7 +733,7 @@ impl DAG {
                     )?
                 };
                 println!(
-                    "[{:.2}s] Prepared input data for node {}",
+                    "[{:.3}s] Prepared input data for node {}",
                     start_time.elapsed().as_secs_f32(),
                     node_id_for_blocking
                 );
@@ -738,12 +745,21 @@ impl DAG {
 
             let node_id_for_error = node_id_for_async.clone();
 
+            let execution_start = Instant::now();
             let result = if let Some(ms) = timeout_ms {
                 match timeout(Duration::from_millis(ms), execution).await {
-                    Ok(result) => result.map_err(|e| DAGError::ExecutionError {
-                        node_id: node_id_for_error.clone(),
-                        reason: format!("Task join error: {e}"),
-                    })?,
+                    Ok(result) => {
+                        println!(
+                            "[{:.3}s] Node {} execution took {:.3}s",
+                            start_time.elapsed().as_secs_f32(),
+                            node_id_for_async,
+                            execution_start.elapsed().as_secs_f32()
+                        );
+                        result.map_err(|e| DAGError::ExecutionError {
+                            node_id: node_id_for_error.clone(),
+                            reason: format!("Task join error: {e}"),
+                        })?
+                    },
                     Err(_) => Err(DAGError::ExecutionError {
                         node_id: node_id_for_error.clone(),
                         reason: format!("Node execution timed out after {ms}ms"),
@@ -758,41 +774,33 @@ impl DAG {
 
             match result {
                 Ok((id, output)) => {
+                    let store_start = Instant::now();
+                    shared_results_for_async.lock().unwrap().insert(id.clone(), output);
                     println!(
-                        "[{:.2}s] Node {} completed successfully",
+                        "[{:.3}s] Node {} result storage took {:.3}s",
                         start_time.elapsed().as_secs_f32(),
-                        id
+                        id,
+                        store_start.elapsed().as_secs_f32()
                     );
-                    shared_results_for_async
-                        .lock()
-                        .unwrap()
-                        .insert(id.clone(), output);
+
+                    let notify_start = Instant::now();
                     if let Some(sender) = notifiers_for_async.lock().unwrap().get(&id) {
+                        println!(
+                            "[{:.3}s] Notifying {} of completion",
+                            start_time.elapsed().as_secs_f32(),
+                            id
+                        );
                         let _ = sender.send(());
                     }
+                    println!(
+                        "[{:.3}s] Node {} notification took {:.3}s",
+                        start_time.elapsed().as_secs_f32(),
+                        id,
+                        notify_start.elapsed().as_secs_f32()
+                    );
                     Ok(())
                 }
-                Err(DAGError::ExecutionError { reason, .. }) => {
-                    println!(
-                        "[{:.2}s] Node {} failed: {:?}",
-                        start_time.elapsed().as_secs_f32(),
-                        node_id_for_error,
-                        reason
-                    );
-                    Err(DAGError::ExecutionError {
-                        node_id: node_id_for_error,
-                        reason,
-                    })
-                }
-                Err(e) => {
-                    println!(
-                        "[{:.2}s] Node {} failed: {:?}",
-                        start_time.elapsed().as_secs_f32(),
-                        node_id_for_error,
-                        e
-                    );
-                    Err(e)
-                }
+                Err(e) => Err(e),
             }
         })
     }
@@ -806,12 +814,30 @@ impl DAG {
         start_time: Instant,
     ) -> Result<Data, DAGError> {
         println!(
-            "[{:.2}s] Preparing input data for node {node_id}",
+            "[{:.3}s] Preparing input data for node {node_id}",
             start_time.elapsed().as_secs_f32()
         );
 
         if !edges.is_empty() {
-            let mut valid_inputs = Vec::new();
+            if edges.len() == 1 {
+                let edge = &edges[0];
+                if let Some(output) = results.get(&edge.source) {
+                    if !Self::validate_data_type(output, expected_type) {
+                        return Err(DAGError::TypeMismatch {
+                            node_id: node_id.to_string(),
+                            expected: expected_type.clone(),
+                            actual: output.get_type(),
+                        });
+                    }
+                    return Ok(output.clone());
+                }
+                return Err(DAGError::MissingDependency {
+                    node_id: node_id.to_string(),
+                    dependency_id: edge.source.clone(),
+                });
+            }
+
+            let mut valid_inputs = Vec::with_capacity(edges.len());
             for edge in edges {
                 if let Some(output) = results.get(&edge.source) {
                     valid_inputs.push(output.clone());
@@ -822,26 +848,10 @@ impl DAG {
                     });
                 }
             }
-
-            if valid_inputs.len() == 1 {
-                let input = valid_inputs.pop().unwrap();
-                if !Self::validate_data_type(&input, expected_type) {
-                    return Err(DAGError::TypeMismatch {
-                        node_id: node_id.to_string(),
-                        expected: expected_type.clone(),
-                        actual: input.get_type(),
-                    });
-                }
-                return Ok(input);
-            }
             return Ok(Data::List(valid_inputs));
         }
 
-        if let Some(input) = initial_inputs.get(node_id) {
-            return Ok(input.clone());
-        }
-
-        Ok(Data::Null)
+        Ok(initial_inputs.get(node_id).cloned().unwrap_or(Data::Null))
     }
 
     fn handle_caching(
@@ -851,7 +861,7 @@ impl DAG {
         request_id: &str,
         elapsed_secs: f32,
     ) {
-        println!("[{elapsed_secs:.2}s] Caching results");
+        println!("[{elapsed_secs:.3}s] Caching results");
         let cache = Arc::clone(cache);
         let results_copy = final_results.clone();
         let inputs = self.initial_inputs.clone();
