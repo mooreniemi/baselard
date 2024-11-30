@@ -373,24 +373,36 @@ impl DAG {
         config: DAGConfig,
         cache: Option<Arc<Cache>>,
     ) -> Result<Self, String> {
+        let start = Instant::now();
+        println!("DAGConfig: {config:?}");
+
+        // Time hash calculation
+        let hash_start = Instant::now();
         let ir_hash = ir.calculate_hash();
+        println!("Hash calculation took {:?}", hash_start.elapsed());
+
         let mut nodes = HashMap::new();
         let mut edges: HashMap<NodeID, Vec<Edge>> = HashMap::new();
         let mut initial_inputs = HashMap::new();
         let mut node_ids = HashSet::new();
 
-        println!("DAGConfig: {config:?}");
-
+        // Time duplicate ID check
+        let dup_start = Instant::now();
         println!("Checking for duplicate node IDs");
         for node in ir.nodes.iter() {
             if !node_ids.insert(node.id.clone()) {
                 return Err(format!("Duplicate node ID found: {}", node.id));
             }
         }
+        println!("Duplicate check took {:?}", dup_start.elapsed());
 
         println!("Registry: {registry:?}");
         println!("Creating components");
+
+        // Time component creation and validation
+        let comp_start = Instant::now();
         for node in ir.nodes.iter() {
+            let component_start = Instant::now();
             let component = registry
                 .get_configured(&node.component_type, &node.config)
                 .map_err(|e| format!("Failed to get component for node {}: {}", node.id, e))?;
@@ -424,16 +436,21 @@ impl DAG {
             }
 
             nodes.insert(node.id.clone(), component);
+            println!("Node {} setup took {:?}", node.id, component_start.elapsed());
         }
+        println!("Total component creation took {:?}", comp_start.elapsed());
 
-        Ok(Self {
+        let dag = Self {
             nodes: Arc::new(nodes),
             edges: Arc::new(edges),
             initial_inputs: Arc::new(initial_inputs),
             config,
             cache,
             ir_hash,
-        })
+        };
+
+        println!("Total DAG setup took {:?}", start.elapsed());
+        Ok(dag)
     }
 
     fn validate_data_type(data: &Data, expected_type: &DataType) -> bool {
