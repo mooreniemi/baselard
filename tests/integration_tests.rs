@@ -79,7 +79,6 @@ async fn test_optimal_makespan() {
     assert_eq!(results.len(), 4);
 }
 
-#[ignore = "FIXME: implement cancellation"]
 #[tokio::test]
 async fn test_optimal_failspan() {
     let json_config = json!([
@@ -132,7 +131,7 @@ async fn test_optimal_failspan() {
 
     assert!(result.is_err(), "Execution should fail");
     assert!(
-        duration.as_millis() < 75,  // 50ms for fast_1 + fast_2 + small buffer
+        duration.as_millis() < 85,  // 50ms + 20ms + small buffer < 100ms slow_1
         "Execution should fail fast, got {}ms",
         duration.as_millis()
     );

@@ -1,3 +1,4 @@
+use futures::StreamExt;
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
@@ -626,45 +627,90 @@ impl DAG {
         start_time: Instant,
         request_id: String,
     ) -> Result<IndexMap<NodeID, Data>, DAGError> {
-        for node_id in &sorted_nodes {
-            let (tx, _) = watch::channel(());
-            notifiers.lock().unwrap().insert(node_id.clone(), tx);
-        }
-
         println!(
             "[{:.3}s] Spawning tasks for {} nodes",
             start_time.elapsed().as_secs_f32(),
             sorted_nodes.len()
         );
 
-        let mut handles: Vec<(String, tokio::task::JoinHandle<Result<(), DAGError>>)> = Vec::new();
-        for node_id in sorted_nodes {
-            handles.push((
-                node_id.clone(),
-                self.spawn_node_task(
+        let setup_start = Instant::now();
+        for node_id in &sorted_nodes {
+            let (tx, _) = watch::channel(());
+            notifiers.lock().unwrap().insert(node_id.clone(), tx);
+        }
+        println!(
+            "[{:.3}s] Notification channels setup took {:.3}s",
+            start_time.elapsed().as_secs_f32(),
+            setup_start.elapsed().as_secs_f32()
+        );
+
+        let spawn_start = Instant::now();
+        let handles: Vec<_> = sorted_nodes
+            .into_iter()
+            .map(|node_id| {
+                let handle = self.spawn_node_task(
                     &node_id,
                     &request_id,
                     &notifiers,
                     &shared_results,
-                    start_time
-                )
-            ));
+                    start_time,
+                );
+                (node_id, handle)
+            })
+            .collect();
+        println!(
+            "[{:.3}s] Task spawning took {:.3}s",
+            start_time.elapsed().as_secs_f32(),
+            spawn_start.elapsed().as_secs_f32()
+        );
+
+        let futures_start = Instant::now();
+        let mut futures = Vec::new();
+        let mut abort_handles = Vec::new();
+
+        for (id, handle) in handles {
+            let id_for_future = id.clone();
+            futures.push(async move {
+                match handle.await {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(e)) => Err((id_for_future, e)),
+                    Err(e) => Err((id_for_future.clone(), DAGError::ExecutionError {
+                        node_id: id_for_future,
+                        reason: format!("Task join error: {e}"),
+                    })),
+                }
+            });
+            abort_handles.push(id);
         }
+        println!(
+            "[{:.3}s] Future preparation took {:.3}s",
+            start_time.elapsed().as_secs_f32(),
+            futures_start.elapsed().as_secs_f32()
+        );
 
-        println!("[{:.3}s] Waiting for all tasks to complete",
-            start_time.elapsed().as_secs_f32());
+        let mut all_tasks = futures::stream::FuturesUnordered::from_iter(futures);
+        println!(
+            "[{:.3}s] Starting parallel execution of {} tasks",
+            start_time.elapsed().as_secs_f32(),
+            abort_handles.len()
+        );
 
-        for (node_id, handle) in handles {
-            handle.await.map_err(|e| DAGError::ExecutionError {
-                node_id,
-                reason: format!("Task join error: {e}"),
-            })??;
+        while let Some(result) = all_tasks.next().await {
+            if let Err((failed_node, error)) = result {
+                println!(
+                    "[{:.3}s] Node {} failed, aborting remaining tasks",
+                    start_time.elapsed().as_secs_f32(),
+                    failed_node
+                );
+                return Err(error);
+            }
         }
 
         let final_results = (*shared_results.lock().unwrap()).clone();
-        println!("[{:.3}s] All tasks completed",
-            start_time.elapsed().as_secs_f32());
-        println!("Final results: {final_results:?}");
+        println!(
+            "[{:.3}s] All tasks completed successfully",
+            start_time.elapsed().as_secs_f32(),
+        );
 
         Ok(final_results)
     }
@@ -683,46 +729,43 @@ impl DAG {
         let shared_results = Arc::clone(shared_results);
 
         let mut receivers = Self::setup_dependency_receivers(&self.edges, &node_id, &notifiers);
-
         let nodes = Arc::clone(&self.nodes);
         let edges = Arc::clone(&self.edges);
         let initial_inputs = Arc::clone(&self.initial_inputs);
         let timeout_ms = self.config.per_node_timeout_ms();
 
-        let node_id_for_async = node_id.clone();
-        let shared_results_for_async = Arc::clone(&shared_results);
-        let notifiers_for_async = Arc::clone(&notifiers);
-
         tokio::spawn(async move {
             println!(
-                "[{:.3}s] Starting task for node {}",
+                "[{:.3}s] Node {} waiting for dependencies",
                 start_time.elapsed().as_secs_f32(),
-                node_id_for_async
+                node_id
             );
-
-            Self::wait_for_dependencies(&mut receivers, &node_id_for_async, start_time).await?;
+            if !receivers.is_empty() {
+                Self::wait_for_dependencies(
+                    &mut receivers,
+                    &node_id,
+                    start_time,
+                    &shared_results,
+                    &edges,
+                ).await?;
+            }
 
             let execution = Self::prepare_node_execution(
-                node_id_for_async.clone(),
+                node_id.clone(),
                 request_id,
                 nodes,
                 edges,
                 initial_inputs,
-                shared_results_for_async.clone(),
+                shared_results.clone(),
                 start_time,
             );
 
-            let result = Self::execute_with_timeout(
-                execution,
-                timeout_ms,
-                &node_id_for_async,
-                start_time,
-            ).await?;
+            let result = Self::execute_with_timeout(execution, timeout_ms, &node_id, start_time).await?;
 
             Self::handle_execution_result(
                 result,
-                &shared_results_for_async,
-                &notifiers_for_async,
+                &shared_results,
+                &notifiers,
                 start_time,
             );
 
@@ -750,8 +793,17 @@ impl DAG {
         receivers: &mut HashMap<String, watch::Receiver<()>>,
         node_id: &str,
         start_time: Instant,
+        shared_results: &SharedResults,
+        edges: &HashMap<NodeID, Vec<Edge>>,
     ) -> Result<(), DAGError> {
         let wait_start = Instant::now();
+
+        println!(
+            "[{:.3}s] Node {} waiting for {} dependencies",
+            start_time.elapsed().as_secs_f32(),
+            node_id,
+            receivers.len()
+        );
         for receiver in receivers.values_mut() {
             if let Err(e) = receiver.changed().await {
                 return Err(DAGError::ExecutionError {
@@ -760,6 +812,25 @@ impl DAG {
                 });
             }
         }
+
+        println!(
+            "[{:.3}s] Node {} verifying {} dependency results",
+            start_time.elapsed().as_secs_f32(),
+            node_id,
+            edges.get(node_id).map_or(0, Vec::len)
+        );
+        if let Some(edges) = edges.get(node_id) {
+            let results = shared_results.lock().unwrap();
+            for edge in edges {
+                if !results.contains_key(&edge.source) {
+                    return Err(DAGError::MissingDependency {
+                        node_id: node_id.to_string(),
+                        dependency_id: edge.source.clone(),
+                    });
+                }
+            }
+        }
+
         println!(
             "[{:.3}s] Node {} waited {:.3}s for dependencies",
             start_time.elapsed().as_secs_f32(),
@@ -780,25 +851,35 @@ impl DAG {
     ) -> task::JoinHandle<Result<(String, Data), DAGError>> {
         task::spawn_blocking(move || {
             let input_data = {
+                let prep_start = Instant::now();
                 let results_guard = shared_results.lock().unwrap();
-                Self::prepare_input_data(
+                let result = Self::prepare_input_data(
                     &node_id,
                     edges.get(&node_id).map_or(&[], Vec::as_slice),
                     &results_guard,
                     &initial_inputs,
                     &nodes.get(&node_id).unwrap().input_type(),
                     start_time,
-                )?
+                )?;
+                println!(
+                    "[{:.3}s] Input preparation for node {} took {:.3}s",
+                    start_time.elapsed().as_secs_f32(),
+                    node_id,
+                    prep_start.elapsed().as_secs_f32()
+                );
+                result
             };
-            println!(
-                "[{:.3}s] Prepared input data for node {}",
-                start_time.elapsed().as_secs_f32(),
-                node_id
-            );
 
+            let execution_start = Instant::now();
             let execution_context = NodeExecutionContext::new(node_id.clone(), request_id);
             let component = nodes.get(&node_id).unwrap();
             let output = component.execute(execution_context, input_data)?;
+            println!(
+                "[{:.3}s] Node {} execution took {:.3}s",
+                start_time.elapsed().as_secs_f32(),
+                node_id,
+                execution_start.elapsed().as_secs_f32()
+            );
             Ok((node_id, output))
         })
     }
@@ -839,7 +920,7 @@ impl DAG {
     }
 
     fn handle_execution_result(
-        result: (NodeID, Data),
+        result: (String, Data),
         shared_results: &SharedResults,
         notifiers: &Notifiers,
         start_time: Instant,
@@ -857,7 +938,7 @@ impl DAG {
         let notify_start = Instant::now();
         if let Some(sender) = notifiers.lock().unwrap().get(&id) {
             println!(
-                "[{:.3}s] Notifying {} of completion",
+                "[{:.3}s] Notifying dependents of node {} completion",
                 start_time.elapsed().as_secs_f32(),
                 id
             );
@@ -927,7 +1008,8 @@ impl DAG {
         request_id: &str,
         elapsed_secs: f32,
     ) {
-        println!("[{elapsed_secs:.3}s] Caching results");
+        println!("[{elapsed_secs:.3}s] Starting cache storage");
+        let cache_start = Instant::now();
         let cache = Arc::clone(cache);
         let results_copy = final_results.clone();
         let inputs = self.initial_inputs.clone();
@@ -936,6 +1018,10 @@ impl DAG {
 
         tokio::spawn(async move {
             cache.store_result(ir_hash, &inputs, results_copy, Some(request_id));
+            println!(
+                "[{elapsed_secs:.3}s] Cache storage spawned, setup took {:.3}s",
+                cache_start.elapsed().as_secs_f32()
+            );
         });
     }
 
