@@ -11,8 +11,14 @@ import onnx
 from onnx import checker
 
 # Parse command-line arguments
-parser = argparse.ArgumentParser(description="Export Decision Tree with optional preprocessing to ONNX.")
-parser.add_argument("--no-preprocess", action="store_true", help="Disable preprocessing in the ONNX model.")
+parser = argparse.ArgumentParser(
+    description="Export Decision Tree with optional preprocessing to ONNX."
+)
+parser.add_argument(
+    "--no-preprocess",
+    action="store_true",
+    help="Disable preprocessing in the ONNX model.",
+)
 parser.add_argument("--f", help="(vs code interactive argument set, ignore)")
 args = parser.parse_args()
 
@@ -21,16 +27,22 @@ X, y = make_classification(
     n_samples=100, n_features=4, n_informative=3, n_redundant=1, random_state=42
 )
 
+
 # Define a custom preprocessing function
 def custom_transform(x):
     return np.sqrt(np.abs(x))  # Example: Square root of absolute value
+
 
 # Preprocessing steps (optional, based on argument)
 if not args.no_preprocess:
     print("Including preprocessing in the ONNX model...")
     preprocessor = ColumnTransformer(
         transformers=[
-            ("custom", FunctionTransformer(custom_transform), [1, 2]),  # Apply custom function
+            (
+                "custom",
+                FunctionTransformer(custom_transform),
+                [1, 2],
+            ),  # Apply custom function
             ("cat", OneHotEncoder(), [0]),  # One-hot encode categorical features
         ]
     )
@@ -51,7 +63,9 @@ pipeline.fit(X, y)
 onnx_path = "../data/decision_tree_with_pipeline.onnx"
 
 # Specify the input type for the model
-initial_type = [("input", FloatTensorType([None, 4]))]  # Original input shape: [batch_size, 4]
+initial_type = [
+    ("input", FloatTensorType([None, 4]))
+]  # Original input shape: [batch_size, 4]
 
 # Attempt to convert the pipeline to ONNX
 try:
@@ -64,7 +78,9 @@ try:
     # Save the ONNX model to a file
     with open(onnx_path, "wb") as f:
         f.write(onnx_model.SerializeToString())
-    print(f"Pipeline with decision tree model has been converted to ONNX and saved as {onnx_path}")
+    print(
+        f"Pipeline with decision tree model has been converted to ONNX and saved as {onnx_path}"
+    )
 
     # Validate the ONNX model
     model = onnx.load(onnx_path)

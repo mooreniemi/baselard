@@ -60,7 +60,11 @@ async def send_request(
 
 
 async def load_test(
-    concurrent_users, requests_per_user, exclude_dangerous=True, enable_cache=True
+    concurrent_users,
+    requests_per_user,
+    exclude_dangerous=True,
+    exclude_remote=True,
+    enable_cache=True,
 ):
     """Run load test with specified number of concurrent users and requests."""
     # Load all JSON files from tests/resources
@@ -80,6 +84,11 @@ async def load_test(
         # Skip dangerous transform tests if excluded
         if exclude_dangerous and "dangerous_transform" in file_path:
             print(f"Skipping dangerous test file: {os.path.basename(file_path)}")
+            continue
+
+        # Skip remote tests if excluded
+        if exclude_remote and "remote" in file_path:
+            print(f"Skipping remote test file: {os.path.basename(file_path)}")
             continue
 
         try:
@@ -198,34 +207,36 @@ def main():
         # Test against a different server
         python scripts/load_test.py --url http://localhost:3000/execute
     """
-    parser = argparse.ArgumentParser(description='Load test for the DAG execution server')
-    parser.add_argument(
-        '--users',
-        type=int,
-        default=10,
-        help='Number of concurrent users (default: 10)'
+    parser = argparse.ArgumentParser(
+        description="Load test for the DAG execution server"
     )
     parser.add_argument(
-        '--requests',
+        "--users", type=int, default=10, help="Number of concurrent users (default: 10)"
+    )
+    parser.add_argument(
+        "--requests",
         type=int,
         default=50,
-        help='Number of requests per user (default: 50)'
+        help="Number of requests per user (default: 50)",
     )
     parser.add_argument(
-        '--allow-dangerous',
-        action='store_true',
-        help='Include dangerous transform tests'
+        "--allow-dangerous",
+        action="store_true",
+        help="Include dangerous transform tests",
     )
     parser.add_argument(
-        '--disable-cache',
-        action='store_true',
-        help='Disable server-side caching'
+        "--disable-cache", action="store_true", help="Disable server-side caching"
     )
     parser.add_argument(
-        '--url',
+        "--url",
         type=str,
-        default='http://localhost:3000/execute',
-        help='Server URL (default: http://localhost:3000/execute)'
+        default="http://localhost:3000/execute",
+        help="Server URL (default: http://localhost:3000/execute)",
+    )
+    parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="Include tests requiring remote services",
     )
 
     args = parser.parse_args()
@@ -235,6 +246,7 @@ def main():
             concurrent_users=args.users,
             requests_per_user=args.requests,
             exclude_dangerous=not args.allow_dangerous,
+            exclude_remote=not args.allow_remote,
             enable_cache=not args.disable_cache,
         )
     )

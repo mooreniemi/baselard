@@ -168,8 +168,6 @@ async fn test_simple_seq_adds_up() {
     );
 }
 
-
-
 #[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn test_complex_dag_execution() {

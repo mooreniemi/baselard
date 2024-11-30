@@ -1,0 +1,145 @@
+[
+    {
+      "id": "sample_data",
+      "component_type": "PayloadTransformer",
+      "config": {
+        "transformation_expression": "{ \"features\": [1.0, 2.0, 3.0, 4.0] }",
+        "validation_data": {
+          "input": {},
+          "expected_output": {
+            "features": [1.0, 2.0, 3.0, 4.0]
+          }
+        }
+      },
+      "inputs": {
+        "data": {
+          "features": [1.0, 2.0, 3.0, 4.0]
+        }
+      }
+    },
+    {
+      "id": "extract_features",
+      "component_type": "PayloadTransformer",
+      "config": {
+        "transformation_expression": "{ type: \"list\", values: (.features | map({ type: \"float\", value: . })) }",
+        "validation_data": {
+          "input": {
+            "features": [1.0, 2.0, 3.0, 4.0]
+          },
+          "expected_output": {
+            "type": "list",
+            "values": [
+              {"type": "float", "value": 1.0},
+              {"type": "float", "value": 2.0},
+              {"type": "float", "value": 3.0},
+              {"type": "float", "value": 4.0}
+            ]
+          }
+        }
+      },
+      "depends_on": ["sample_data"]
+    },
+    {
+      "id": "json_to_data",
+      "component_type": "JsonToDataProcessor",
+      "config": {},
+      "depends_on": ["extract_features"]
+    },
+    {
+      "id": "remote_prediction",
+      "component_type": "MLModel",
+      "config": {
+        "remote_endpoint": "http://127.0.0.1:4000/process"
+      },
+      "depends_on": ["json_to_data"]
+    },
+    {
+      "id": "onnx_simple",
+      "component_type": "MLModel",
+      "config": {
+        "onnx_model_path": "tests/resources/decision_tree.onnx"
+      },
+      "depends_on": ["json_to_data"]
+    },
+    {
+      "id": "onnx_pipeline",
+      "component_type": "MLModel",
+      "config": {
+        "onnx_model_path": "tests/resources/decision_tree_with_pipeline.onnx"
+      },
+      "depends_on": ["json_to_data"]
+    },
+    {
+      "id": "remote_to_json",
+      "component_type": "DataToJsonProcessor",
+      "config": {},
+      "depends_on": ["remote_prediction"]
+    },
+    {
+      "id": "simple_to_json",
+      "component_type": "DataToJsonProcessor",
+      "config": {},
+      "depends_on": ["onnx_simple"]
+    },
+    {
+      "id": "pipeline_to_json",
+      "component_type": "DataToJsonProcessor",
+      "config": {},
+      "depends_on": ["onnx_pipeline"]
+    },
+    {
+      "id": "combine_inputs",
+      "component_type": "JsonCombiner",
+      "config": {},
+      "depends_on": ["remote_to_json", "simple_to_json", "pipeline_to_json"]
+    },
+    {
+      "id": "combine_results",
+      "component_type": "PayloadTransformer",
+      "config": {
+        "transformation_expression": "{ remote_prediction: (.input_0.values | map(.value)), simple_prediction: (.input_1.values | map(.value)), pipeline_prediction: (.input_2.values | map(.value)), combined_stats: { sum_remote: (.input_0.values | map(.value) | add), sum_simple: (.input_1.values | map(.value) | add), sum_pipeline: (.input_2.values | map(.value) | add) } }",
+        "validation_data": {
+          "input": {
+            "input_0": {
+              "type": "list",
+              "values": [
+                {"type": "float", "value": 2.0},
+                {"type": "float", "value": 3.0},
+                {"type": "float", "value": 4.0},
+                {"type": "float", "value": 5.0}
+              ]
+            },
+            "input_1": {
+              "type": "list",
+              "values": [
+                {"type": "float", "value": 0.0},
+                {"type": "float", "value": 1.0},
+                {"type": "float", "value": 1.0},
+                {"type": "float", "value": 0.0}
+              ]
+            },
+            "input_2": {
+              "type": "list",
+              "values": [
+                {"type": "float", "value": 1.0},
+                {"type": "float", "value": 0.0},
+                {"type": "float", "value": 0.0},
+                {"type": "float", "value": 1.0}
+              ]
+            }
+          },
+          "expected_output": {
+            "remote_prediction": [2.0, 3.0, 4.0, 5.0],
+            "simple_prediction": [0.0, 1.0, 1.0, 0.0],
+            "pipeline_prediction": [1.0, 0.0, 0.0, 1.0],
+            "combined_stats": {
+              "sum_remote": 14,
+              "sum_simple": 2,
+              "sum_pipeline": 2
+            }
+          }
+        }
+      },
+      "depends_on": ["combine_inputs"]
+    }
+  ]

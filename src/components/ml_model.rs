@@ -6,27 +6,34 @@ use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Instant;
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref ONNX_ENV: Arc<Environment> = Arc::new(
+        Environment::builder()
+            .with_name("GlobalONNXEnvironment")
+            .with_log_level(ort::LoggingLevel::Warning)
+            .build()
+            .expect("Failed to create global ONNX environment")
+    );
+}
 
 pub struct MLModel {
     remote_endpoint: Option<String>,
-    onnx_model_path: Option<String>,
-    environment: Option<Arc<Environment>>,
+    session: Option<Arc<ort::Session>>,
 }
 
 impl Component for MLModel {
     fn configure(config: Value) -> Result<Self, Error> {
         let remote_endpoint = config["remote_endpoint"].as_str().map(String::from);
-        let onnx_model_path = config["onnx_model_path"].as_str().map(String::from);
-
-        let environment = if onnx_model_path.is_some() {
+        let session = if let Some(model_path) = config["onnx_model_path"].as_str() {
             Some(Arc::new(
-                Environment::builder()
-                    .with_name("MLModelEnvironment")
-                    .with_log_level(ort::LoggingLevel::Warning)
-                    .build()
-                    .map_err(|e| {
-                        Error::ConfigurationError(format!("Failed to build ONNX environment: {e}"))
-                    })?,
+                SessionBuilder::new(&ONNX_ENV)
+                    .map_err(|e| Error::ConfigurationError(format!("Failed to create session builder: {e}")))?
+                    .with_optimization_level(GraphOptimizationLevel::Level1)
+                    .map_err(|e| Error::ConfigurationError(format!("Failed to set optimization level: {e}")))?
+                    .with_model_from_file(model_path)
+                    .map_err(|e| Error::ConfigurationError(format!("Failed to load model: {e}")))?
             ))
         } else {
             None
@@ -34,8 +41,7 @@ impl Component for MLModel {
 
         Ok(MLModel {
             remote_endpoint,
-            onnx_model_path,
-            environment,
+            session,
         })
     }
 
@@ -92,32 +98,10 @@ impl Component for MLModel {
 
 impl MLModel {
     fn handle_local_prediction(&self, node_id: &str, input: &[f64]) -> Result<Vec<f64>, DAGError> {
-        println!("handle_local_prediction (in {node_id})");
-        let model_path = self.onnx_model_path.as_ref().ok_or_else(|| DAGError::ExecutionError {
+        let session = self.session.as_ref().ok_or_else(|| DAGError::ExecutionError {
             node_id: node_id.to_string(),
-            reason: "No ONNX model path configured".to_string(),
+            reason: "No ONNX session available".to_string(),
         })?;
-
-        let environment = self.environment.as_ref().ok_or_else(|| DAGError::ExecutionError {
-            node_id: node_id.to_string(),
-            reason: "ONNX environment not initialized".to_string(),
-        })?;
-
-        let session = SessionBuilder::new(environment)
-            .map_err(|e| DAGError::ExecutionError {
-                node_id: node_id.to_string(),
-                reason: format!("Failed to create session builder: {e}"),
-            })?
-            .with_optimization_level(GraphOptimizationLevel::Level1)
-            .map_err(|e| DAGError::ExecutionError {
-                node_id: node_id.to_string(),
-                reason: format!("Failed to set optimization level: {e}"),
-            })?
-            .with_model_from_file(model_path)
-            .map_err(|e| DAGError::ExecutionError {
-                node_id: node_id.to_string(),
-                reason: format!("Failed to load model: {e}"),
-            })?;
 
         #[allow(clippy::cast_possible_truncation)]
         let array = Array::from_shape_vec(

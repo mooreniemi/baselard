@@ -12,12 +12,13 @@ def health():
 def process():
     data = request.json
     features = data.get("features", [])
+    print(f"features: {features}")
 
     if not features:
         return jsonify({"error": "Features array is empty"}), 400
 
     processed_data = [x + 1 for x in features]  # Example processing
-    print(processed_data)
+    print(f"processed_data: {processed_data}")
     return jsonify({"processed_features": processed_data})
 
 

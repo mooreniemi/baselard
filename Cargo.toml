@@ -37,6 +37,7 @@ sorted-vec = { version = "0.8.5", features = ["serde"] }
 lazy_static = "1.4"
 spin_sleep = "1"
 ort = "1.16"
+# this version is required by the onnx crate
 ndarray = "0.15"
 
 [lib]
