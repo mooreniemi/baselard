@@ -21,8 +21,10 @@ Baselard is a library for building and executing directed acyclic graphs (DAGs) 
 - [x] Keep a request history of components for replay
 - [x] Automatically handle parallel nodes
 - [x] Abort execution of DAG on failing nodes
-- [ ] Graceful shutdown on abortion
+- [ ] Graceful per-node shutdown on abortion (allow for cleanup)
 - [x] JQ transformations (with pre-validation of JQ code for safety)
+- [x] ONNX model execution
+- [x] Remote model execution (just a simple example for now)
 - [ ] Streaming will not be supported: it doesn't match the scheduling mechanism
 
 To try a complex transform (if you have `cargo run --example serving` running),
