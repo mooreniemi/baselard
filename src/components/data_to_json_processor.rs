@@ -51,6 +51,7 @@ impl Component for DataToJsonProcessor {
             DataType::List(Box::new(DataType::Union(vec![
                 DataType::Integer,
                 DataType::Text,
+                DataType::Float,
             ]))),
         ])
     }

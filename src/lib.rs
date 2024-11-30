@@ -12,4 +12,5 @@ pub mod components {
     pub mod payload_transformer;
     pub mod string_length_counter;
     pub mod wildcard_processor;
+    pub mod ml_model;
 }

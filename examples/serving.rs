@@ -5,7 +5,7 @@ use axum::{
     Router,
 };
 
-use baselard::{cache::Cache, components::{crash_test_dummy::CrashTestDummy, data_to_json_processor::DataToJsonProcessor, json_combiner::JsonCombiner, json_to_data_processor::JsonToDataProcessor, string_length_counter::StringLengthCounter}};
+use baselard::{cache::Cache, components::{crash_test_dummy::CrashTestDummy, data_to_json_processor::DataToJsonProcessor, json_combiner::JsonCombiner, json_to_data_processor::JsonToDataProcessor, ml_model::MLModel, string_length_counter::StringLengthCounter}};
 use baselard::dag_visualizer::TreeView;
 
 use baselard::{
@@ -158,6 +158,7 @@ async fn main() {
     registry.register::<DataToJsonProcessor>("DataToJsonProcessor");
     registry.register::<JsonToDataProcessor>("JsonToDataProcessor");
     registry.register::<JsonCombiner>("JsonCombiner");
+    registry.register::<MLModel>("MLModel");
 
     let cache = Cache::new(Some("/tmp/axum_dag_history.jsonl"), 10_000);
 

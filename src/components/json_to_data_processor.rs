@@ -34,6 +34,7 @@ impl Component for JsonToDataProcessor {
                     .map(|v| match v["type"].as_str().unwrap() {
                         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                         "integer" => Data::Integer(v["value"].as_i64().unwrap() as i32),
+                        "float" => Data::Float(v["value"].as_f64().unwrap()),
                         "text" => Data::Text(v["value"].as_str().unwrap().to_string()),
                         _ => Data::Null,
                     })

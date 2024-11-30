@@ -1,0 +1,63 @@
+[
+    {
+      "id": "sample_data",
+      "component_type": "PayloadTransformer",
+      "config": {
+        "transformation_expression": "{ \"features\": [1.0, 2.0, 3.0, 4.0] }",
+        "validation_data": {
+          "input": {},
+          "expected_output": {
+            "features": [1.0, 2.0, 3.0, 4.0]
+          }
+        }
+      },
+      "depends_on": [],
+      "inputs": {
+        "data": {
+          "features": [1.0, 2.0, 3.0, 4.0]
+        }
+      }
+    },
+    {
+      "id": "extract_features",
+      "component_type": "PayloadTransformer",
+      "config": {
+        "transformation_expression": "{ type: \"list\", values: (.features | map({ type: \"float\", value: . })) }",
+        "validation_data": {
+          "input": {
+            "features": [1.0, 2.0, 3.0, 4.0]
+          },
+          "expected_output": {
+            "type": "list",
+            "values": [
+              {"type": "float", "value": 1.0},
+              {"type": "float", "value": 2.0},
+              {"type": "float", "value": 3.0},
+              {"type": "float", "value": 4.0}
+            ]
+          }
+        }
+      },
+      "depends_on": ["sample_data"]
+    },
+    {
+      "id": "json_to_data",
+      "component_type": "JsonToDataProcessor",
+      "config": {},
+      "depends_on": ["extract_features"]
+    },
+    {
+      "id": "ml_prediction",
+      "component_type": "MLModel",
+      "config": {
+        "onnx_model_path": "tests/resources/decision_tree.onnx"
+      },
+      "depends_on": ["json_to_data"]
+    },
+    {
+      "id": "data_to_json",
+      "component_type": "DataToJsonProcessor",
+      "config": {},
+      "depends_on": ["ml_prediction"]
+    }
+  ]
