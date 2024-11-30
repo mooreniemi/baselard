@@ -6,6 +6,10 @@ use serde_json::Value;
 use std::cell::RefCell;
 use std::process::Command;
 use std::time::Instant;
+use std::hash::{Hash, Hasher};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
+use std::sync::RwLock;
 
 /// The maximum number of programs to keep in the per-thread cache.
 const MAX_PROGRAMS_PER_THREAD: usize = 100;
@@ -64,12 +68,29 @@ thread_local! {
     static COMPILED_PROGRAMS: RefCell<IndexMap<String, jq_rs::JqProgram>> = RefCell::new(IndexMap::new());
 }
 
+lazy_static::lazy_static! {
+    static ref INVALID_EXPRESSIONS: RwLock<HashSet<u64>> = RwLock::new(HashSet::new());
+}
+
 impl PayloadTransformer {
+    fn get_expression_hash(expression: &str) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        expression.hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// Validates a JQ program with test data to ensure:
     /// 1. It doesn't contain infinite loops (using timeout)
     /// 2. It produces the expected output structure
     /// 3. The output values match expectations (unless `structure_only` is true)
     fn validate_expression(expression: &str, validation_data: &Value) -> Result<(), String> {
+        let program_hash = Self::get_expression_hash(expression);
+
+        // Check if we already know this program is invalid
+        if INVALID_EXPRESSIONS.read().unwrap().contains(&program_hash) {
+            return Err("Program previously failed validation".to_string());
+        }
+
         let validation_input = validation_data.get("input")
             .ok_or("validation_data.input is required")?;
         let expected_output = validation_data.get("expected_output")
@@ -113,6 +134,7 @@ impl PayloadTransformer {
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
             let timeout_error = output.status.code() == Some(124);
+            INVALID_EXPRESSIONS.write().unwrap().insert(program_hash);
             return Err(format!("JQ program validation failed: {}",
                 if timeout_error {
                     "Program timed out (possible infinite loop)"
@@ -122,12 +144,18 @@ impl PayloadTransformer {
             ));
         }
 
-        let actual_output: Value = serde_json::from_str(&String::from_utf8_lossy(&output.stdout))
-            .map_err(|e| format!("Failed to parse JQ output as JSON: {e}"))?;
+        let actual_output: Value = match serde_json::from_str(&String::from_utf8_lossy(&output.stdout)) {
+            Ok(v) => v,
+            Err(e) => {
+                INVALID_EXPRESSIONS.write().unwrap().insert(program_hash);
+                return Err(format!("Failed to parse JQ output as JSON: {e}"));
+            }
+        };
 
         if structure_only {
             Self::validate_structure(expected_output, &actual_output)?;
         } else if actual_output != *expected_output {
+            INVALID_EXPRESSIONS.write().unwrap().insert(program_hash);
             return Err(format!(
                 "Validation failed: output doesn't match.\nExpected: {expected_output}\nActual: {actual_output}"
             ));
@@ -270,28 +298,29 @@ impl Component for PayloadTransformer {
 
         match input {
             Data::Json(value) => {
+                // FIXME: node_id should be known to the instance ultimately
                 let input_str = serde_json::to_string(&value)
                     .map_err(|err| DAGError::ExecutionError {
-                        node_id: "unknown".to_string(),
+                        node_id: "unknown_payload_transformer".to_string(),
                         reason: format!("Failed to serialize input: {err}"),
                     })?;
 
                 let output_str = self.execute_jq_program(&input_str)
                     .map_err(|err| DAGError::ExecutionError {
-                        node_id: "unknown".to_string(),
+                        node_id: "unknown_payload_transformer".to_string(),
                         reason: err,
                     })?;
 
                 let output_json: Value = serde_json::from_str(&output_str)
                     .map_err(|err| DAGError::ExecutionError {
-                        node_id: "unknown".to_string(),
+                        node_id: "unknown_payload_transformer".to_string(),
                         reason: format!("Failed to parse jq output: {err}"),
                     })?;
 
                 Ok(Data::Json(output_json))
             }
             _ => Err(DAGError::ExecutionError {
-                node_id: "unknown".to_string(),
+                node_id: "unknown_payload_transformer".to_string(),
                 reason: "Invalid input type, expected JSON".to_string(),
             }),
         }

@@ -15,7 +15,7 @@ fn setup_registry() -> Registry {
     registry.register::<adder::Adder>("Adder");
     registry.register::<string_length_counter::StringLengthCounter>("StringLengthCounter");
     registry.register::<wildcard_processor::WildcardProcessor>("WildcardProcessor");
-    registry.register::<flexible_wildcard_processor::FlexibleWildcardProcessor>(
+    registry.register::<data_to_json_processor::DataToJsonProcessor>(
         "FlexibleWildcardProcessor",
     );
     registry.register::<crash_test_dummy::CrashTestDummy>("CrashTestDummy");

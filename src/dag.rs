@@ -613,16 +613,19 @@ impl DAG {
             sorted_nodes.len()
         );
 
-        let mut handles = Vec::new();
+        let mut handles: Vec<(String, tokio::task::JoinHandle<Result<(), DAGError>>)> = Vec::new();
         for node_id in sorted_nodes {
-            handles.push(self.spawn_node_task(&node_id, &notifiers, &shared_results, elapsed_secs));
+            handles.push((
+                node_id.clone(),
+                self.spawn_node_task(&node_id, &notifiers, &shared_results, elapsed_secs)
+            ));
         }
 
         println!("[{elapsed_secs:.2}s] Waiting for all tasks to complete");
 
-        for handle in handles {
+        for (node_id, handle) in handles {
             handle.await.map_err(|e| DAGError::ExecutionError {
-                node_id: "unknown".to_string(),
+                node_id,
                 reason: format!("Task join error: {e}"),
             })??;
         }
@@ -744,6 +747,18 @@ impl DAG {
                         let _ = sender.send(());
                     }
                     Ok(())
+                }
+                Err(DAGError::ExecutionError { reason, .. }) => {
+                    println!(
+                        "[{:.2}s] Node {} failed: {:?}",
+                        elapsed_secs + start_time.elapsed().as_secs_f32(),
+                        node_id_for_error,
+                        reason
+                    );
+                    Err(DAGError::ExecutionError {
+                        node_id: node_id_for_error,
+                        reason,
+                    })
                 }
                 Err(e) => {
                     println!(

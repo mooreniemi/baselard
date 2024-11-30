@@ -3,15 +3,15 @@ use serde_json::{json, Value};
 use crate::component::{Component, Data, DataType, Error};
 use crate::dag::DAGError;
 
-pub struct FlexibleWildcardProcessor;
+pub struct DataToJsonProcessor;
 
-impl Component for FlexibleWildcardProcessor {
+impl Component for DataToJsonProcessor {
     fn configure(_: Value) -> Result<Self, Error> {
-        Ok(FlexibleWildcardProcessor)
+        Ok(DataToJsonProcessor)
     }
 
     fn execute(&self, input: Data) -> Result<Data, DAGError> {
-        println!("FlexibleWildcardProcessor input: {input:?}");
+        println!("DataToJsonProcessor input: {input:?}");
         let json_input = match input {
             Data::Null => json!({ "type": "null" }),
             Data::Json(value) => {

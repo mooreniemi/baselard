@@ -1,0 +1,170 @@
+[
+    {
+      "id": "raw_numbers",
+      "component_type": "PayloadTransformer",
+      "config": {
+        "transformation_expression": ".items | map(.price)",
+        "validation_data": {
+          "input": {
+            "items": [
+              {"name": "Test1", "price": 10.0},
+              {"name": "Test2", "price": 20.0}
+            ]
+          },
+          "expected_output": [10.0, 20.0]
+        }
+      },
+      "depends_on": [],
+      "inputs": {
+        "items": [
+          {"name": "Item1", "price": 99.99},
+          {"name": "Item2", "price": 149.99},
+          {"name": "Item3", "price": 199.99},
+          {"name": "Item4", "price": 49.99},
+          {"name": "Item5", "price": 299.99}
+        ]
+      }
+    },
+    {
+      "id": "analyze_prices",
+      "component_type": "PayloadTransformer",
+      "config": {
+        "transformation_expression": "def mean: add / length; { average: mean, maximum: max, minimum: min, top_3: sort | reverse | .[0:3] }",
+        "validation_data": {
+          "input": [10.0, 20.0, 30.0],
+          "expected_output": {
+            "average": 20,
+            "maximum": 30.0,
+            "minimum": 10.0,
+            "top_3": [30.0, 20.0, 10.0]
+          }
+        }
+      },
+      "depends_on": ["raw_numbers"]
+    },
+    {
+      "id": "format_results",
+      "component_type": "PayloadTransformer",
+      "config": {
+        "transformation_expression": "{ price_stats: ., metadata: { record_count: (.top_3 | length), average_formatted: (.average | tostring + \" USD\") } }",
+        "validation_data": {
+          "input": {
+            "average": 20.0,
+            "maximum": 30.0,
+            "minimum": 10.0,
+            "top_3": [30.0, 20.0, 10.0]
+          },
+          "expected_output": {
+            "price_stats": {
+              "average": 20.0,
+              "maximum": 30.0,
+              "minimum": 10.0,
+              "top_3": [30.0, 20.0, 10.0]
+            },
+            "metadata": {
+              "record_count": 3,
+              "average_formatted": "20.0 USD"
+            }
+          }
+        }
+      },
+      "depends_on": ["analyze_prices"]
+    },
+    {
+      "id": "count_length",
+      "component_type": "PayloadTransformer",
+      "config": {
+        "transformation_expression": "{ type: \"text\", value: (\"Numbers processed: \" + (. | tostring)) }",
+        "validation_data": {
+          "input": [10.0, 20.0],
+          "expected_output": {
+            "type": "text",
+            "value": "Numbers processed: [10.0,20.0]"
+          }
+        }
+      },
+      "depends_on": ["raw_numbers"]
+    },
+    {
+      "id": "extract_value",
+      "component_type": "PayloadTransformer",
+      "config": {
+        "transformation_expression": "{ type: \"integer\", value: (.value | length) }",
+        "validation_data": {
+          "input": {"type": "text", "value": "some text"},
+          "expected_output": {"type": "integer", "value": 9}
+        }
+      },
+      "depends_on": ["count_length"]
+    },
+    {
+      "id": "json_to_data",
+      "component_type": "JsonToDataProcessor",
+      "config": {},
+      "depends_on": ["extract_value"]
+    },
+    {
+      "id": "add_stats",
+      "component_type": "Adder",
+      "config": {
+        "value": 100
+      },
+      "depends_on": ["json_to_data"]
+    },
+    {
+      "id": "data_to_json",
+      "component_type": "DataToJsonProcessor",
+      "config": {},
+      "depends_on": ["add_stats"]
+    },
+    {
+      "id": "combine_inputs",
+      "component_type": "JsonCombiner",
+      "config": {},
+      "depends_on": ["format_results", "data_to_json"]
+    },
+    {
+      "id": "process_results",
+      "component_type": "PayloadTransformer",
+      "config": {
+        "transformation_expression": "{ status: \"success\", data: .input_0, stats: { message_length_with_offset: (.input_1 | if .type == \"integer\" then .value else 0 end) }, timestamp: (now | tostring) }",
+        "validation_data": {
+          "input": {
+            "input_0": {
+              "price_stats": {
+                "average": 20.0,
+                "maximum": 30.0,
+                "minimum": 10.0,
+                "top_3": [30.0, 20.0, 10.0]
+              },
+              "metadata": {
+                "record_count": 3,
+                "average_formatted": "20.0 USD"
+              }
+            },
+            "input_1": {"type": "integer", "value": 109}
+          },
+          "expected_output": {
+            "status": "success",
+            "data": {
+              "price_stats": {
+                "average": 20.0,
+                "maximum": 30.0,
+                "minimum": 10.0,
+                "top_3": [30.0, 20.0, 10.0]
+              },
+              "metadata": {
+                "record_count": 3,
+                "average_formatted": "20.0 USD"
+              }
+            },
+            "stats": {
+              "message_length_with_offset": 109
+            }
+          },
+          "structure_only": true
+        }
+      },
+      "depends_on": ["combine_inputs"]
+    }
+  ]

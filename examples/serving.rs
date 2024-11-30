@@ -5,7 +5,7 @@ use axum::{
     Router,
 };
 
-use baselard::cache::Cache;
+use baselard::{cache::Cache, components::{crash_test_dummy::CrashTestDummy, data_to_json_processor::DataToJsonProcessor, json_combiner::JsonCombiner, json_to_data_processor::JsonToDataProcessor, string_length_counter::StringLengthCounter}};
 use baselard::dag_visualizer::TreeView;
 
 use baselard::{
@@ -99,7 +99,10 @@ async fn execute_dag(
 
     let result = match DAGIR::from_json(&dag_config) {
         Ok(ir) => {
+            let start = Instant::now();
             let tree = ir.build_tree(TreeView::Dependency);
+            let elapsed = start.elapsed().as_millis();
+            println!("DAG tree built in {elapsed}ms");
             let mut output = String::new();
             let _ = ascii_tree::write_tree(&mut output, &tree);
             println!("{output}");
@@ -124,6 +127,7 @@ async fn execute_dag(
     };
 
     let elapsed = start.elapsed().as_millis();
+    println!("DAG execution took {elapsed}ms");
 
     match result {
         Ok(outputs) => Json(json!({
@@ -143,12 +147,17 @@ async fn execute_dag(
     }
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 async fn main() {
     let mut registry = Registry::new();
     registry.register::<Adder>("Adder");
     registry.register::<Multiplier>("Multiplier");
+    registry.register::<StringLengthCounter>("StringLengthCounter");
+    registry.register::<CrashTestDummy>("CrashTestDummy");
     registry.register::<PayloadTransformer>("PayloadTransformer");
+    registry.register::<DataToJsonProcessor>("DataToJsonProcessor");
+    registry.register::<JsonToDataProcessor>("JsonToDataProcessor");
+    registry.register::<JsonCombiner>("JsonCombiner");
 
     let cache = Cache::new(Some("/tmp/axum_dag_history.jsonl"), 10_000);
 

@@ -12,6 +12,7 @@
                     "text": "hello world test"
                 },
                 "expected_output": {
+                    "original": "hello world test",
                     "tokens": ["hello", "world", "test"]
                 }
             }

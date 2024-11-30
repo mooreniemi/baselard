@@ -22,6 +22,10 @@
           ]
         },
         "expected_output": {
+          "original_items": [
+            {"name": "Test1", "price": 100, "category": "A"},
+            {"name": "Test2", "price": 10, "category": "B"}
+          ],
           "item_count": 2,
           "total_price": 110,
           "expensive_items": ["Test1"],
