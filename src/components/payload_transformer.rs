@@ -97,7 +97,7 @@ impl PayloadTransformer {
 
         println!("Validating expression: {expression}");
 
-        // Run validation in a separate process to avoid potential deadlocks
+        // Run validation in a separate process so we can kill it if it hangs
         let mut child = Self::spawn_validation_process(expression)?;
         Self::write_validation_input(&mut child, &validation_json)?;
         Self::wait_for_process_completion(&mut child, program_hash)?;
@@ -108,9 +108,11 @@ impl PayloadTransformer {
 
         // Only compile and cache after successful validation
         COMPILED_PROGRAMS.with(|programs| {
+            println!("Thread {:?}: Compiling JQ program because validation passed", std::thread::current().id());
             let mut programs = programs.borrow_mut();
             if !programs.contains_key(expression) {
                 if programs.len() >= MAX_PROGRAMS_PER_THREAD {
+                    println!("Thread {:?}: Removing oldest JQ program because we hit the limit", std::thread::current().id());
                     programs.shift_remove_index(0);
                 }
                 match compile(expression) {
@@ -170,15 +172,27 @@ impl PayloadTransformer {
     fn write_validation_input(child: &mut Child, validation_json: &str) -> Result<(), String> {
         if let Some(mut stdin) = child.stdin.take() {
             let validation_json = validation_json.to_owned();
-            let write_result = std::thread::spawn(move || {
+            let write_handle = std::thread::spawn(move || {
                 use std::io::Write;
                 stdin.write_all(validation_json.as_bytes())
             });
 
-            match write_result.join().map_err(|_| "Write thread panicked")? {
-                Ok(()) => Ok(()),
-                Err(e) => Err(format!("Failed to write to stdin: {e}")),
+            // Add timeout for the write operation
+            let start = Instant::now();
+            let timeout = Duration::from_secs_f32(VALIDATION_TIMEOUT);
+
+            while start.elapsed() < timeout {
+                if write_handle.is_finished() {
+                    return match write_handle.join() {
+                        Ok(Ok(())) => Ok(()),
+                        Ok(Err(e)) => Err(format!("Failed to write to stdin: {e}")),
+                        Err(_) => Err("Write thread panicked".to_string()),
+                    };
+                }
+                std::thread::sleep(Duration::from_millis(10));
             }
+
+            Err("Timeout while writing to stdin".to_string())
         } else {
             Ok(())
         }
