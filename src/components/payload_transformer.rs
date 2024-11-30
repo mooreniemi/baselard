@@ -97,6 +97,7 @@ impl PayloadTransformer {
 
         println!("Validating expression: {expression}");
 
+        // Run validation in a separate process to avoid potential deadlocks
         let mut child = Self::spawn_validation_process(expression)?;
         Self::write_validation_input(&mut child, &validation_json)?;
         Self::wait_for_process_completion(&mut child, program_hash)?;
@@ -104,6 +105,26 @@ impl PayloadTransformer {
         // Now we pass ownership of the child process
         let actual_output = Self::get_process_output(child, program_hash)?;
         Self::validate_output(&actual_output, expected_output, structure_only, program_hash)?;
+
+        // Only compile and cache after successful validation
+        COMPILED_PROGRAMS.with(|programs| {
+            let mut programs = programs.borrow_mut();
+            if !programs.contains_key(expression) {
+                if programs.len() >= MAX_PROGRAMS_PER_THREAD {
+                    programs.shift_remove_index(0);
+                }
+                match compile(expression) {
+                    Ok(program) => {
+                        programs.insert(expression.to_string(), program);
+                    }
+                    Err(e) => {
+                        INVALID_EXPRESSIONS.insert(program_hash);
+                        return Err(format!("Failed to compile JQ program: {e}"));
+                    }
+                }
+            }
+            Ok(())
+        })?;
 
         println!("Validation completed in {:?}", start.elapsed());
         Ok(())
@@ -287,7 +308,9 @@ impl PayloadTransformer {
     /// and thread-local storage. Returns the JSON output as a string.
     fn execute_jq_program(&self, input_str: &str) -> Result<String, String> {
         let start = Instant::now();
-        COMPILED_PROGRAMS.with(|programs| {
+
+        // Get or insert the program and execute it in a single critical section
+        let output_str = COMPILED_PROGRAMS.with(|programs| {
             let mut programs = programs.borrow_mut();
             if !programs.contains_key(&self.expression) {
                 // If we're at capacity, remove the oldest entry
@@ -297,7 +320,7 @@ impl PayloadTransformer {
                         "Thread {:?}: Removing oldest JQ program",
                         std::thread::current().id()
                     );
-                    programs.shift_remove_index(0); // Removes and returns the first (oldest) entry
+                    programs.shift_remove_index(0);
                     println!(
                         "Thread {:?}: Removed oldest JQ program in {:?}",
                         std::thread::current().id(),
@@ -317,28 +340,19 @@ impl PayloadTransformer {
                     start_compilation.elapsed()
                 );
             }
-            Ok(())
+
+            // Execute the program while holding the lock
+            let program = programs.get_mut(&self.expression)
+                .ok_or_else(|| "Program not found after insertion".to_string())?;
+            program.run(input_str)
+                .map_err(|e| format!("Failed to execute jq: {e}"))
         })?;
 
-        println!(
-            "Thread {:?}: Program access took {:?}",
-            std::thread::current().id(),
-            start.elapsed()
-        );
-
-        let output_str = COMPILED_PROGRAMS
-            .with(|programs| {
-                let mut programs = programs.borrow_mut();
-                let program = programs.get_mut(&self.expression).unwrap();
-                program.run(input_str)
-            })
-            .map_err(|e| format!("Failed to execute jq: {e}"))?;
-
-        let start = Instant::now();
+        let execution_time = start.elapsed();
         println!(
             "Thread {:?}: JQ execution took {:?}",
             std::thread::current().id(),
-            start.elapsed()
+            execution_time
         );
 
         Ok(output_str)
