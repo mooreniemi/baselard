@@ -10,6 +10,7 @@ use serde::{de::VariantAccess, Deserialize, Deserializer, Serialize, Serializer}
 use serde_json::Value;
 
 use crate::dag::DAGError;
+use crate::dag::NodeExecutionContext;
 
 /// Runtime values that flow through the DAG
 #[derive(Debug, Clone)]
@@ -273,17 +274,16 @@ pub trait Component: Send + Sync + 'static {
     /// Configure a new component instance from the provided configuration
     ///
     /// # Errors
-    /// Returns an Error if the configuration is invalid or cannot be parsed
+    /// Returns `component::Error::ConfigurationError` if the configuration is invalid.
     fn configure(config: Value) -> Result<Self, Error>
     where
         Self: Sized;
 
-    /// Execute the component with the given input data
+    /// Execute the component with the given execution context and input data
     ///
     /// # Errors
-    /// Returns a `DAGError` if the component execution fails
-    // FIXME: probably should return an Error, not DAGError
-    fn execute(&self, input: Data) -> Result<Data, DAGError>;
+    /// Returns `DAGError` if the component execution fails.
+    fn execute(&self, context: NodeExecutionContext, input: Data) -> Result<Data, DAGError>;
 
     fn input_type(&self) -> DataType;
 

@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::component::{Component, Data, DataType, Error};
-use crate::dag::DAGError;
+use crate::dag::{DAGError, NodeExecutionContext};
 
 pub struct JsonToDataProcessor;
 
@@ -10,18 +10,20 @@ impl Component for JsonToDataProcessor {
         Ok(JsonToDataProcessor)
     }
 
-    fn execute(&self, input: Data) -> Result<Data, DAGError> {
-        println!("JsonToDataProcessor input: {input:?}");
-        
+    fn execute(&self, context: NodeExecutionContext, input: Data) -> Result<Data, DAGError> {
+        println!("JsonToDataProcessor {}: input={input:?}", context.node_id);
+
         let Data::Json(json) = input else {
             return Err(DAGError::ExecutionError {
-                node_id: "unknown".to_string(),
-                reason: "Expected JSON input".to_string() 
+                node_id: context.node_id,
+                reason: "Expected JSON input".to_string()
             });
         };
 
         match json.get("type").and_then(Value::as_str) {
+            #[allow(clippy::match_same_arms)]
             Some("null") => Ok(Data::Null),
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             Some("integer") => Ok(Data::Integer(json["value"].as_i64().unwrap() as i32)),
             Some("float") => Ok(Data::Float(json["value"].as_f64().unwrap())),
             Some("text") => Ok(Data::Text(json["value"].as_str().unwrap().to_string())),
@@ -30,6 +32,7 @@ impl Component for JsonToDataProcessor {
                 let list = values
                     .iter()
                     .map(|v| match v["type"].as_str().unwrap() {
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                         "integer" => Data::Integer(v["value"].as_i64().unwrap() as i32),
                         "text" => Data::Text(v["value"].as_str().unwrap().to_string()),
                         _ => Data::Null,

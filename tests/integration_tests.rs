@@ -79,6 +79,65 @@ async fn test_optimal_makespan() {
     assert_eq!(results.len(), 4);
 }
 
+#[ignore = "FIXME: implement cancellation"]
+#[tokio::test]
+async fn test_optimal_failspan() {
+    let json_config = json!([
+        {
+            "id": "fast_1",
+            "component_type": "CrashTestDummy",
+            "config": {
+                "fail": false,
+                "sleep_duration_ms": 50
+            },
+            "depends_on": []
+        },
+        {
+            "id": "fast_2",
+            "component_type": "CrashTestDummy",
+            "config": {
+                "fail": true,  // This will fail after 20ms
+                "sleep_duration_ms": 20
+            },
+            "depends_on": ["fast_1"]
+        },
+        {
+            "id": "slow_1",
+            "component_type": "CrashTestDummy",
+            "config": {
+                "fail": false,
+                "sleep_duration_ms": 100  // This should get cancelled
+            },
+            "depends_on": []
+        },
+        {
+            "id": "final",
+            "component_type": "CrashTestDummy",
+            "config": {
+                "fail": false,
+                "sleep_duration_ms": 10
+            },
+            "depends_on": ["slow_1", "fast_2"]
+        }
+    ]);
+
+    let registry = setup_registry();
+    let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
+    let dag_config = DAGConfig::cache_off();
+
+    let start = std::time::Instant::now();
+    let dag = DAG::from_ir(&dag_ir, &registry, dag_config, None).expect("Valid DAG");
+    let result = dag.execute(None).await;
+    let duration = start.elapsed();
+
+    assert!(result.is_err(), "Execution should fail");
+    assert!(
+        duration.as_millis() < 75,  // 50ms for fast_1 + fast_2 + small buffer
+        "Execution should fail fast, got {}ms",
+        duration.as_millis()
+    );
+}
+
 #[tokio::test]
 async fn test_simple_seq_adds_up() {
     let json_config = json!([
@@ -109,6 +168,8 @@ async fn test_simple_seq_adds_up() {
         "adder_2 should have accumulated to 57"
     );
 }
+
+
 
 #[allow(clippy::too_many_lines)]
 #[tokio::test]
@@ -693,4 +754,40 @@ async fn test_dag_replay() {
     // Test replay of non-existent request ID
     let err = dag.replay("non-existent-id").await.unwrap_err();
     assert!(matches!(err, DAGError::HistoricalResultNotFound { .. }));
+}
+
+#[tokio::test]
+async fn test_dag_identical_components() {
+    let json_config = json!([
+        {
+            "id": "first_adder",
+            "component_type": "Adder",
+            "config": { "value": 5 },
+            "depends_on": [],
+            "inputs": 10
+        },
+        {
+            "id": "second_adder",
+            "component_type": "Adder",
+            "config": { "value": 5 },  // Same configuration as first_adder
+            "depends_on": ["first_adder"]
+        },
+        {
+            "id": "third_adder",
+            "component_type": "Adder",
+            "config": { "value": 5 },  // Same configuration as others
+            "depends_on": ["second_adder"]
+        }
+    ]);
+
+    let registry = setup_registry();
+    let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
+    let dag_config = DAGConfig::cache_off();
+    let dag = DAG::from_ir(&dag_ir, &registry, dag_config, None).expect("Valid DAG");
+
+    let results = dag.execute(None).await.expect("Execution success");
+
+    assert_eq!(results.get("first_adder"), Some(&Data::Integer(15)));   // 10 + 5
+    assert_eq!(results.get("second_adder"), Some(&Data::Integer(20)));  // 15 + 5
+    assert_eq!(results.get("third_adder"), Some(&Data::Integer(25)));   // 20 + 5
 }

@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::component::{Component, Data, DataType, Error};
-use crate::dag::DAGError;
+use crate::dag::{DAGError, NodeExecutionContext};
 
 pub struct DataToJsonProcessor;
 
@@ -10,8 +10,8 @@ impl Component for DataToJsonProcessor {
         Ok(DataToJsonProcessor)
     }
 
-    fn execute(&self, input: Data) -> Result<Data, DAGError> {
-        println!("DataToJsonProcessor input: {input:?}");
+    fn execute(&self, context: NodeExecutionContext, input: Data) -> Result<Data, DAGError> {
+        println!("DataToJsonProcessor {}: input={input:?}", context.node_id);
         let json_input = match input {
             Data::Null => json!({ "type": "null" }),
             Data::Json(value) => {

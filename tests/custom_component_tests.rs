@@ -2,7 +2,7 @@ use baselard::cache::Cache;
 use baselard::component::Registry;
 use baselard::component::{Component, Data, DataType, Error};
 use baselard::components::adder::Adder;
-use baselard::dag::{DAGConfig, DAGError, DAG, DAGIR};
+use baselard::dag::{DAGConfig, DAGError, DAG, DAGIR, NodeExecutionContext};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -21,7 +21,8 @@ impl Component for Multiplier {
     }
 
     #[allow(clippy::cast_possible_truncation)]
-    fn execute(&self, input: Data) -> Result<Data, DAGError> {
+    fn execute(&self, context: NodeExecutionContext, input: Data) -> Result<Data, DAGError> {
+        println!("Executing Multiplier {} with value: {}", context.node_id, self.value);
         let input_value = match input {
             Data::Null => 0.0,
             Data::Integer(n) => f64::from(n),

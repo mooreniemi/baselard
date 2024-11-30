@@ -1,15 +1,15 @@
 use crate::component::{Component, Data, DataType, Error};
-use crate::dag::DAGError;
+use crate::dag::{DAGError, NodeExecutionContext};
 use indexmap::IndexMap;
 use jq_rs::compile;
 use serde_json::Value;
 use std::cell::RefCell;
-use std::process::Command;
-use std::time::Instant;
+use std::process::{Child, Command, ExitStatus};
+use std::time::{Duration, Instant};
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashSet;
-use std::sync::RwLock;
+use dashmap::DashSet;
+use std::io::Read;
 
 /// The maximum number of programs to keep in the per-thread cache.
 const MAX_PROGRAMS_PER_THREAD: usize = 100;
@@ -69,7 +69,7 @@ thread_local! {
 }
 
 lazy_static::lazy_static! {
-    static ref INVALID_EXPRESSIONS: RwLock<HashSet<u64>> = RwLock::new(HashSet::new());
+    static ref INVALID_EXPRESSIONS: DashSet<u64> = DashSet::new();
 }
 
 impl PayloadTransformer {
@@ -85,13 +85,31 @@ impl PayloadTransformer {
     /// 2. It produces the expected output structure
     /// 3. The output values match expectations (unless `structure_only` is true)
     fn validate_expression(expression: &str, validation_data: &Value) -> Result<(), String> {
+        let start = Instant::now();
         let program_hash = Self::get_expression_hash(expression, validation_data);
 
-        // Check if we already know this program is invalid
-        if INVALID_EXPRESSIONS.read().unwrap().contains(&program_hash) {
+        if INVALID_EXPRESSIONS.contains(&program_hash) {
             return Err("Program previously failed validation".to_string());
         }
 
+        let (validation_input, expected_output, structure_only) = Self::parse_validation_data(validation_data)?;
+        let validation_json = Self::serialize_validation_input(validation_input)?;
+
+        println!("Validating expression: {expression}");
+
+        let mut child = Self::spawn_validation_process(expression)?;
+        Self::write_validation_input(&mut child, &validation_json)?;
+        Self::wait_for_process_completion(&mut child, program_hash)?;
+
+        // Now we pass ownership of the child process
+        let actual_output = Self::get_process_output(child, program_hash)?;
+        Self::validate_output(&actual_output, expected_output, structure_only, program_hash)?;
+
+        println!("Validation completed in {:?}", start.elapsed());
+        Ok(())
+    }
+
+    fn parse_validation_data(validation_data: &Value) -> Result<(&Value, &Value, bool), String> {
         let validation_input = validation_data.get("input")
             .ok_or("validation_data.input is required")?;
         let expected_output = validation_data.get("expected_output")
@@ -100,11 +118,16 @@ impl PayloadTransformer {
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
-        let validation_json = serde_json::to_string(validation_input)
-            .map_err(|e| format!("Failed to serialize validation input: {e}"))?;
+        Ok((validation_input, expected_output, structure_only))
+    }
 
-        println!("Validating expression: {expression}");
-        let mut child = Command::new("gtimeout")
+    fn serialize_validation_input(validation_input: &Value) -> Result<String, String> {
+        serde_json::to_string(validation_input)
+            .map_err(|e| format!("Failed to serialize validation input: {e}"))
+    }
+
+    fn spawn_validation_process(expression: &str) -> Result<Child, String> {
+        Command::new("gtimeout")
             .arg(VALIDATION_TIMEOUT.to_string())
             .arg("jq")
             .arg(expression)
@@ -120,22 +143,81 @@ impl PayloadTransformer {
                     .stdout(std::process::Stdio::piped())
                     .spawn()
             })
-            .map_err(|e| format!("Failed to spawn command: {e}"))?;
+            .map_err(|e| format!("Failed to spawn command: {e}"))
+    }
 
+    fn write_validation_input(child: &mut Child, validation_json: &str) -> Result<(), String> {
         if let Some(mut stdin) = child.stdin.take() {
-            use std::io::Write;
-            stdin.write_all(validation_json.as_bytes())
-                .map_err(|e| format!("Failed to write to stdin: {e}"))?;
-            drop(stdin);
+            let validation_json = validation_json.to_owned();
+            let write_result = std::thread::spawn(move || {
+                use std::io::Write;
+                stdin.write_all(validation_json.as_bytes())
+            });
+
+            match write_result.join().map_err(|_| "Write thread panicked")? {
+                Ok(()) => Ok(()),
+                Err(e) => Err(format!("Failed to write to stdin: {e}")),
+            }
+        } else {
+            Ok(())
+        }
+    }
+
+    fn wait_for_process_completion(child: &mut Child, program_hash: u64) -> Result<(), String> {
+        let timeout = Duration::from_secs_f32(VALIDATION_TIMEOUT + 0.5);
+        let start_wait = Instant::now();
+
+        while start_wait.elapsed() < timeout {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    println!("Process completed in {:?}", start_wait.elapsed());
+                    return Self::handle_process_status(child, status, program_hash);
+                }
+                Ok(_) => {
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                Err(e) => return Err(format!("Error waiting for process: {e}")),
+            }
         }
 
+        let _ = child.kill();
+        Err("Process timed out".to_string())
+    }
+
+    fn handle_process_status(child: &mut Child, status: ExitStatus, program_hash: u64) -> Result<(), String> {
+        if !status.success() {
+            let error = if let Some(mut stderr) = child.stderr.take() {
+                let mut error_str = String::new();
+                stderr.read_to_string(&mut error_str)
+                    .map_err(|e| format!("Failed to read stderr: {e}"))?;
+                error_str
+            } else {
+                "No error output available".to_string()
+            };
+
+            let timeout_error = status.code() == Some(124);
+            INVALID_EXPRESSIONS.insert(program_hash);
+            return Err(format!("JQ program validation failed: {}",
+                if timeout_error {
+                    "Program timed out (possible infinite loop)"
+                } else {
+                    &error
+                }
+            ));
+        }
+        Ok(())
+    }
+
+    fn get_process_output(child: Child, program_hash: u64) -> Result<Value, String> {
+        // Take ownership of the child process directly
         let output = child.wait_with_output()
             .map_err(|e| format!("Failed to read command output: {e}"))?;
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
             let timeout_error = output.status.code() == Some(124);
-            INVALID_EXPRESSIONS.write().unwrap().insert(program_hash);
+            INVALID_EXPRESSIONS.insert(program_hash);
             return Err(format!("JQ program validation failed: {}",
                 if timeout_error {
                     "Program timed out (possible infinite loop)"
@@ -145,25 +227,29 @@ impl PayloadTransformer {
             ));
         }
 
-        let actual_output: Value = match serde_json::from_str(&String::from_utf8_lossy(&output.stdout)) {
-            Ok(v) => v,
-            Err(e) => {
-                INVALID_EXPRESSIONS.write().unwrap().insert(program_hash);
-                return Err(format!("Failed to parse JQ output as JSON: {e}"));
-            }
-        };
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout))
+            .map_err(|e| {
+                INVALID_EXPRESSIONS.insert(program_hash);
+                format!("Failed to parse JQ output as JSON: {e}")
+            })
+    }
 
+    fn validate_output(
+        actual_output: &Value,
+        expected_output: &Value,
+        structure_only: bool,
+        program_hash: u64,
+    ) -> Result<(), String> {
         if structure_only {
-            Self::validate_structure(expected_output, &actual_output)?;
-        } else if actual_output != *expected_output {
-            INVALID_EXPRESSIONS.write().unwrap().insert(program_hash);
-            return Err(format!(
+            Self::validate_structure(expected_output, actual_output)
+        } else if actual_output != expected_output {
+            INVALID_EXPRESSIONS.insert(program_hash);
+            Err(format!(
                 "Validation failed: output doesn't match.\nExpected: {expected_output}\nActual: {actual_output}"
-            ));
+            ))
+        } else {
+            Ok(())
         }
-
-        println!("Validation passed");
-        Ok(())
     }
 
     /// Helper function to validate that two values have the same structure
@@ -294,8 +380,8 @@ impl Component for PayloadTransformer {
         })
     }
 
-    fn execute(&self, input: Data) -> Result<Data, DAGError> {
-        println!("PayloadTransformer input: {input:?}");
+    fn execute(&self, context: NodeExecutionContext, input: Data) -> Result<Data, DAGError> {
+        println!("PayloadTransformer {}: input={input:?}", context.node_id);
 
         match input {
             Data::Json(value) => {

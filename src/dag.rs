@@ -402,10 +402,15 @@ impl DAG {
         // Time component creation and validation
         let comp_start = Instant::now();
         for node in ir.nodes.iter() {
+            println!("Starting component creation for node {}", node.id);
             let component_start = Instant::now();
+
+            println!("Getting component from registry for node {}", node.id);
             let component = registry
                 .get_configured(&node.component_type, &node.config)
                 .map_err(|e| format!("Failed to get component for node {}: {}", node.id, e))?;
+
+            println!("Component creation successful for node {}", node.id);
 
             if let Some(input) = &node.inputs {
                 if !Self::validate_data_type(input, &component.input_type()) {
@@ -519,6 +524,7 @@ impl DAG {
                 notifiers,
                 shared_results,
                 start_time,
+                request_id.clone(),
             )
             .await?;
 
@@ -618,6 +624,7 @@ impl DAG {
         notifiers: Notifiers,
         shared_results: SharedResults,
         start_time: Instant,
+        request_id: String,
     ) -> Result<IndexMap<NodeID, Data>, DAGError> {
         for node_id in &sorted_nodes {
             let (tx, _) = watch::channel(());
@@ -634,7 +641,13 @@ impl DAG {
         for node_id in sorted_nodes {
             handles.push((
                 node_id.clone(),
-                self.spawn_node_task(&node_id, &notifiers, &shared_results, start_time)
+                self.spawn_node_task(
+                    &node_id,
+                    &request_id,
+                    &notifiers,
+                    &shared_results,
+                    start_time
+                )
             ));
         }
 
@@ -656,26 +669,20 @@ impl DAG {
         Ok(final_results)
     }
 
-    #[allow(clippy::too_many_lines)]
     fn spawn_node_task(
         &self,
         node_id: &NodeID,
+        request_id: &str,
         notifiers: &Notifiers,
         shared_results: &SharedResults,
         start_time: Instant,
     ) -> tokio::task::JoinHandle<Result<(), DAGError>> {
         let node_id = node_id.to_string();
+        let request_id = request_id.to_string();
         let notifiers = Arc::clone(notifiers);
         let shared_results = Arc::clone(shared_results);
 
-        let mut receivers = HashMap::new();
-        if let Some(edges) = self.edges.get(&node_id) {
-            for edge in edges {
-                if let Some(sender) = notifiers.lock().unwrap().get(&edge.source) {
-                    receivers.insert(edge.source.clone(), sender.subscribe());
-                }
-            }
-        }
+        let mut receivers = Self::setup_dependency_receivers(&self.edges, &node_id, &notifiers);
 
         let nodes = Arc::clone(&self.nodes);
         let edges = Arc::clone(&self.edges);
@@ -693,120 +700,179 @@ impl DAG {
                 node_id_for_async
             );
 
-            let wait_start = Instant::now();
-            for receiver in receivers.values_mut() {
-                if let Err(e) = receiver.changed().await {
-                    return Err(DAGError::ExecutionError {
-                        node_id: node_id_for_async.clone(),
-                        reason: format!("Failed to receive dependency notification: {e}"),
-                    });
-                }
-            }
-            println!(
-                "[{:.3}s] Node {} waited {:.3}s for dependencies",
-                start_time.elapsed().as_secs_f32(),
-                node_id_for_async,
-                wait_start.elapsed().as_secs_f32()
+            Self::wait_for_dependencies(&mut receivers, &node_id_for_async, start_time).await?;
+
+            let execution = Self::prepare_node_execution(
+                node_id_for_async.clone(),
+                request_id,
+                nodes,
+                edges,
+                initial_inputs,
+                shared_results_for_async.clone(),
+                start_time,
             );
 
-            println!(
-                "[{:.3}s] Node {} dependencies satisfied, executing",
-                start_time.elapsed().as_secs_f32(),
-                node_id_for_async
+            let result = Self::execute_with_timeout(
+                execution,
+                timeout_ms,
+                &node_id_for_async,
+                start_time,
+            ).await?;
+
+            Self::handle_execution_result(
+                result,
+                &shared_results_for_async,
+                &notifiers_for_async,
+                start_time,
             );
 
-            let node_id_for_blocking = node_id_for_async.clone();
-            let shared_results_for_blocking = Arc::clone(&shared_results_for_async);
-
-            let execution = task::spawn_blocking(move || {
-                let input_data = {
-                    let results_guard = shared_results_for_blocking.lock().unwrap();
-                    Self::prepare_input_data(
-                        &node_id_for_blocking,
-                        edges
-                            .get(&node_id_for_blocking)
-                            .map_or(&[], std::vec::Vec::as_slice),
-                        &results_guard,
-                        &initial_inputs,
-                        &nodes.get(&node_id_for_blocking).unwrap().input_type(),
-                        start_time,
-                    )?
-                };
-                println!(
-                    "[{:.3}s] Prepared input data for node {}",
-                    start_time.elapsed().as_secs_f32(),
-                    node_id_for_blocking
-                );
-
-                let component = nodes.get(&node_id_for_blocking).unwrap();
-                let output = component.execute(input_data)?;
-                Ok((node_id_for_blocking, output))
-            });
-
-            let node_id_for_error = node_id_for_async.clone();
-
-            let execution_start = Instant::now();
-            let result = if let Some(ms) = timeout_ms {
-                match timeout(Duration::from_millis(ms), execution).await {
-                    Ok(result) => {
-                        println!(
-                            "[{:.3}s] Node {} execution took {:.3}s",
-                            start_time.elapsed().as_secs_f32(),
-                            node_id_for_async,
-                            execution_start.elapsed().as_secs_f32()
-                        );
-                        result.map_err(|e| DAGError::ExecutionError {
-                            node_id: node_id_for_error.clone(),
-                            reason: format!("Task join error: {e}"),
-                        })?
-                    },
-                    Err(_) => Err(DAGError::ExecutionError {
-                        node_id: node_id_for_error.clone(),
-                        reason: format!("Node execution timed out after {ms}ms"),
-                    }),
-                }
-            } else {
-                execution.await.map_err(|e| DAGError::ExecutionError {
-                    node_id: node_id_for_error.clone(),
-                    reason: format!("Task join error: {e}"),
-                })?
-            };
-
-            match result {
-                Ok((id, output)) => {
-                    let store_start = Instant::now();
-                    shared_results_for_async.lock().unwrap().insert(id.clone(), output);
-                    println!(
-                        "[{:.3}s] Node {} result storage took {:.3}s",
-                        start_time.elapsed().as_secs_f32(),
-                        id,
-                        store_start.elapsed().as_secs_f32()
-                    );
-
-                    let notify_start = Instant::now();
-                    if let Some(sender) = notifiers_for_async.lock().unwrap().get(&id) {
-                        println!(
-                            "[{:.3}s] Notifying {} of completion",
-                            start_time.elapsed().as_secs_f32(),
-                            id
-                        );
-                        let _ = sender.send(());
-                    }
-                    println!(
-                        "[{:.3}s] Node {} notification took {:.3}s",
-                        start_time.elapsed().as_secs_f32(),
-                        id,
-                        notify_start.elapsed().as_secs_f32()
-                    );
-                    Ok(())
-                }
-                Err(e) => Err(e),
-            }
+            Ok(())
         })
     }
 
-    fn prepare_input_data(
+    fn setup_dependency_receivers(
+        edges: &HashMap<NodeID, Vec<Edge>>,
+        node_id: &NodeID,
+        notifiers: &Notifiers,
+    ) -> HashMap<String, watch::Receiver<()>> {
+        let mut receivers = HashMap::new();
+        if let Some(edges) = edges.get(node_id) {
+            for edge in edges {
+                if let Some(sender) = notifiers.lock().unwrap().get(&edge.source) {
+                    receivers.insert(edge.source.clone(), sender.subscribe());
+                }
+            }
+        }
+        receivers
+    }
+
+    async fn wait_for_dependencies(
+        receivers: &mut HashMap<String, watch::Receiver<()>>,
         node_id: &str,
+        start_time: Instant,
+    ) -> Result<(), DAGError> {
+        let wait_start = Instant::now();
+        for receiver in receivers.values_mut() {
+            if let Err(e) = receiver.changed().await {
+                return Err(DAGError::ExecutionError {
+                    node_id: node_id.to_string(),
+                    reason: format!("Failed to receive dependency notification: {e}"),
+                });
+            }
+        }
+        println!(
+            "[{:.3}s] Node {} waited {:.3}s for dependencies",
+            start_time.elapsed().as_secs_f32(),
+            node_id,
+            wait_start.elapsed().as_secs_f32()
+        );
+        Ok(())
+    }
+
+    fn prepare_node_execution(
+        node_id: NodeID,
+        request_id: String,
+        nodes: Arc<HashMap<NodeID, Arc<dyn Component>>>,
+        edges: Arc<HashMap<NodeID, Vec<Edge>>>,
+        initial_inputs: Arc<HashMap<NodeID, Data>>,
+        shared_results: SharedResults,
+        start_time: Instant,
+    ) -> task::JoinHandle<Result<(String, Data), DAGError>> {
+        task::spawn_blocking(move || {
+            let input_data = {
+                let results_guard = shared_results.lock().unwrap();
+                Self::prepare_input_data(
+                    &node_id,
+                    edges.get(&node_id).map_or(&[], Vec::as_slice),
+                    &results_guard,
+                    &initial_inputs,
+                    &nodes.get(&node_id).unwrap().input_type(),
+                    start_time,
+                )?
+            };
+            println!(
+                "[{:.3}s] Prepared input data for node {}",
+                start_time.elapsed().as_secs_f32(),
+                node_id
+            );
+
+            let execution_context = NodeExecutionContext::new(node_id.clone(), request_id);
+            let component = nodes.get(&node_id).unwrap();
+            let output = component.execute(execution_context, input_data)?;
+            Ok((node_id, output))
+        })
+    }
+
+    async fn execute_with_timeout(
+        execution: task::JoinHandle<Result<(String, Data), DAGError>>,
+        timeout_ms: Option<u64>,
+        node_id: &NodeID,
+        start_time: Instant,
+    ) -> Result<(String, Data), DAGError> {
+        let execution_start = Instant::now();
+
+        if let Some(ms) = timeout_ms {
+            match timeout(Duration::from_millis(ms), execution).await {
+                Ok(result) => {
+                    println!(
+                        "[{:.3}s] Node {} execution took {:.3}s",
+                        start_time.elapsed().as_secs_f32(),
+                        node_id,
+                        execution_start.elapsed().as_secs_f32()
+                    );
+                    result.map_err(|e| DAGError::ExecutionError {
+                        node_id: node_id.to_string(),
+                        reason: format!("Task join error: {e}"),
+                    })?
+                },
+                Err(_) => Err(DAGError::ExecutionError {
+                    node_id: node_id.to_string(),
+                    reason: format!("Node execution timed out after {ms}ms"),
+                }),
+            }
+        } else {
+            execution.await.map_err(|e| DAGError::ExecutionError {
+                node_id: node_id.to_string(),
+                reason: format!("Task join error: {e}"),
+            })?
+        }
+    }
+
+    fn handle_execution_result(
+        result: (NodeID, Data),
+        shared_results: &SharedResults,
+        notifiers: &Notifiers,
+        start_time: Instant,
+    ) {
+        let (id, output) = result;
+        let store_start = Instant::now();
+        shared_results.lock().unwrap().insert(id.clone(), output);
+        println!(
+            "[{:.3}s] Node {} result storage took {:.3}s",
+            start_time.elapsed().as_secs_f32(),
+            id,
+            store_start.elapsed().as_secs_f32()
+        );
+
+        let notify_start = Instant::now();
+        if let Some(sender) = notifiers.lock().unwrap().get(&id) {
+            println!(
+                "[{:.3}s] Notifying {} of completion",
+                start_time.elapsed().as_secs_f32(),
+                id
+            );
+            let _ = sender.send(());
+        }
+        println!(
+            "[{:.3}s] Node {} notification took {:.3}s",
+            start_time.elapsed().as_secs_f32(),
+            id,
+            notify_start.elapsed().as_secs_f32()
+        );
+    }
+
+    fn prepare_input_data(
+        node_id: &NodeID,
         edges: &[Edge],
         results: &IndexMap<String, Data>,
         initial_inputs: &HashMap<String, Data>,
@@ -944,6 +1010,36 @@ impl DAG {
             cache.get_historical_result(request_id).await
         } else {
             None
+        }
+    }
+}
+
+/// When a Component is used in a DAG, it is aliased with a `NodeID`;
+/// the actual Component's "identity" is its type and configuration.
+/// (Because Components can be reused across different DAGs, via the
+/// Registry.)
+///
+/// The indirection of a `NodeID` as an alias might seem strange until
+/// you want to use the same Component (even with the same configuration)
+/// more than once in a DAG. In that case, you can give each instance
+/// a different `NodeID` and understand exactly which one ran.
+///
+/// (You may want duplicated Components if variation is handled internally.)
+///
+/// Additionally, a Node runs as part of a specific request through
+/// a DAG, so it is useful to have the request ID in the context.
+#[derive(Debug, Clone)]
+pub struct NodeExecutionContext {
+    pub node_id: NodeID,
+    pub request_id: String,
+}
+
+impl NodeExecutionContext {
+    #[must_use]
+    pub fn new(node_id: NodeID, request_id: String) -> Self {
+        Self {
+            node_id,
+            request_id,
         }
     }
 }

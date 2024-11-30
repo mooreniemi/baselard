@@ -2,7 +2,7 @@ use serde_json::Value;
 use spin_sleep::SpinSleeper;
 use std::time::Instant;
 use crate::component::{Component, Data, DataType, Error};
-use crate::dag::DAGError;
+use crate::dag::{DAGError, NodeExecutionContext};
 
 /// A test component that can be configured to fail or sleep
 pub struct CrashTestDummy {
@@ -19,6 +19,7 @@ impl Component for CrashTestDummy {
     fn configure(config: Value) -> Result<Self, Error> {
         let fail = config["fail"].as_bool().unwrap_or(false);
         let sleep_duration_ms = config["sleep_duration_ms"].as_f64();
+        #[allow(clippy::cast_possible_truncation)]
         let spin_threshold_us = config["spin_threshold_us"]
             .as_u64()
             .map_or(50_000, |x| x as u32);
@@ -33,23 +34,26 @@ impl Component for CrashTestDummy {
         })
     }
 
-    fn execute(&self, _input: Data) -> Result<Data, DAGError> {
+    fn execute(&self, context: NodeExecutionContext, _input: Data) -> Result<Data, DAGError> {
         if let Some(duration) = self.sleep_duration_ms {
             let start_time = Instant::now();
             println!(
-                "CrashTestDummy: Sleeping for {duration}ms (spin threshold: {}μs)",
+                "CrashTestDummy {}: Sleeping for {duration}ms (spin threshold: {}μs)",
+                context.node_id,
                 self.spin_threshold_us
             );
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             self.sleeper.sleep(std::time::Duration::from_millis(duration as u64));
             println!(
-                "CrashTestDummy: Done sleeping after {:.3}s",
+                "CrashTestDummy {}: Done sleeping after {:.3}s",
+                context.node_id,
                 start_time.elapsed().as_secs_f32()
             );
         }
 
         if self.fail {
             Err(DAGError::ExecutionError {
-                node_id: "CrashTestDummy".to_string(),
+                node_id: context.node_id,
                 reason: "Simulated failure as configured".to_string(),
             })
         } else {

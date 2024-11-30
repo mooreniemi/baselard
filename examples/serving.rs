@@ -11,7 +11,7 @@ use baselard::dag_visualizer::TreeView;
 use baselard::{
     component::{Component, Data, DataType, Error, Registry},
     components::{adder::Adder, payload_transformer::PayloadTransformer},
-    dag::{DAGConfig, DAGError, DAG, DAGIR},
+    dag::{DAGConfig, DAGError, DAG, DAGIR, NodeExecutionContext},
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -30,7 +30,7 @@ impl Component for Multiplier {
     }
 
     #[allow(clippy::cast_possible_truncation)]
-    fn execute(&self, input: Data) -> Result<Data, DAGError> {
+    fn execute(&self, context: NodeExecutionContext, input: Data) -> Result<Data, DAGError> {
         let input_value = match input {
             Data::Null => 0.0,
             Data::Integer(n) => f64::from(n),
@@ -40,7 +40,8 @@ impl Component for Multiplier {
                 .map(f64::from)
                 .sum(),
             Data::Json(value) => {
-                println!("[Experimental] Multiplier received JSON value: {value:?}");
+                println!("Multiplier {}: received JSON value: {value:?}", context.node_id);
+                #[allow(clippy::cast_precision_loss)]
                 if let Some(num) = value.as_i64() {
                     num as f64
                 } else if let Some(num) = value.as_f64() {

@@ -1,6 +1,6 @@
 use serde_json::{Value, Map};
 use crate::component::{Component, Data, DataType, Error};
-use crate::dag::DAGError;
+use crate::dag::{DAGError, NodeExecutionContext};
 
 pub struct JsonCombiner;
 
@@ -9,8 +9,8 @@ impl Component for JsonCombiner {
         Ok(JsonCombiner)
     }
 
-    fn execute(&self, input: Data) -> Result<Data, DAGError> {
-        println!("JsonCombiner input: {input:?}");
+    fn execute(&self, context: NodeExecutionContext, input: Data) -> Result<Data, DAGError> {
+        println!("JsonCombiner {}: input={input:?}", context.node_id);
 
         match input {
             Data::List(items) => {
@@ -20,7 +20,7 @@ impl Component for JsonCombiner {
                 for (i, item) in items.into_iter().enumerate() {
                     let Data::Json(json_value) = item else {
                         return Err(DAGError::ExecutionError {
-                            node_id: "unknown".to_string(),
+                            node_id: context.node_id,
                             reason: format!("Input {i} must be JSON"),
                         })
                     };
@@ -30,7 +30,7 @@ impl Component for JsonCombiner {
                 Ok(Data::Json(Value::Object(combined)))
             }
             _ => Err(DAGError::ExecutionError {
-                node_id: "unknown".to_string(),
+                node_id: context.node_id,
                 reason: "JsonCombiner requires a List input of JSON values".to_string(),
             }),
         }

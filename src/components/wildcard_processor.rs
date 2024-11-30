@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use serde_json::{json, Value};
 
 use crate::component::{Component, Data, DataType, Error};
-use crate::dag::DAGError;
+use crate::dag::{DAGError, NodeExecutionContext};
 
 pub struct WildcardProcessor {
     expected_input_keys: HashSet<String>,
@@ -32,8 +32,8 @@ impl Component for WildcardProcessor {
         })
     }
 
-    fn execute(&self, input: Data) -> Result<Data, DAGError> {
-        println!("WildcardProcessor input: {input:?}");
+    fn execute(&self, context: NodeExecutionContext, input: Data) -> Result<Data, DAGError> {
+        println!("WildcardProcessor {}: input={input:?}", context.node_id);
         match input {
             Data::Json(mut value) => {
                 let mut fallback_map = serde_json::Map::new();

@@ -55,13 +55,13 @@ fn topological_sort(components: &[Component]) -> Vec<Component> {
 }
 
 fn execute_component_blocking(
-    name: String,
+    name: &str,
     dependencies: Vec<String>,
     execution_time: u64,
     start_time: Instant,
-    notifiers: Arc<Mutex<HashMap<String, watch::Sender<()>>>>,
-    receivers: HashMap<String, watch::Receiver<()>>,
-    outputs: Arc<Mutex<HashMap<String, String>>>,
+    notifiers: &Arc<Mutex<HashMap<String, watch::Sender<()>>>>,
+    receivers: &HashMap<String, watch::Receiver<()>>,
+    outputs: &Arc<Mutex<HashMap<String, String>>>,
 ) {
     let rt_handle = tokio::runtime::Handle::current();
 
@@ -85,9 +85,9 @@ fn execute_component_blocking(
     std::thread::sleep(std::time::Duration::from_secs(execution_time));
 
     let output = format!("Output of {name}");
-    outputs.lock().unwrap().insert(name.clone(), output);
+    outputs.lock().unwrap().insert(name.to_string(), output);
 
-    if let Some(sender) = notifiers.lock().unwrap().get(&name) {
+    if let Some(sender) = notifiers.lock().unwrap().get(name) {
         let _ = sender.send(());
     }
 }
@@ -159,13 +159,13 @@ async fn main() {
 
         let handle = task::spawn_blocking(move || {
             execute_component_blocking(
-                name,
+                &name,
                 dependencies,
                 execution_time,
                 start_time,
-                notifiers,
-                receivers,
-                outputs,
+                &notifiers,
+                &receivers,
+                &outputs,
             );
         });
 
