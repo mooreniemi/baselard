@@ -73,9 +73,10 @@ lazy_static::lazy_static! {
 }
 
 impl PayloadTransformer {
-    fn get_expression_hash(expression: &str) -> u64 {
+    fn get_expression_hash(expression: &str, validation_data: &Value) -> u64 {
         let mut hasher = DefaultHasher::new();
         expression.hash(&mut hasher);
+        validation_data.to_string().hash(&mut hasher);
         hasher.finish()
     }
 
@@ -84,7 +85,7 @@ impl PayloadTransformer {
     /// 2. It produces the expected output structure
     /// 3. The output values match expectations (unless `structure_only` is true)
     fn validate_expression(expression: &str, validation_data: &Value) -> Result<(), String> {
-        let program_hash = Self::get_expression_hash(expression);
+        let program_hash = Self::get_expression_hash(expression, validation_data);
 
         // Check if we already know this program is invalid
         if INVALID_EXPRESSIONS.read().unwrap().contains(&program_hash) {
