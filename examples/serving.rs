@@ -9,7 +9,7 @@ use baselard::cache::Cache;
 use baselard::dag_visualizer::TreeView;
 
 use baselard::{
-    component::{Component, Data, DataType, Registry},
+    component::{Component, Data, DataType, Error, Registry},
     components::{adder::Adder, payload_transformer::PayloadTransformer},
     dag::{DAGConfig, DAGError, DAG, DAGIR},
 };
@@ -24,9 +24,9 @@ struct Multiplier {
 }
 
 impl Component for Multiplier {
-    fn configure(config: serde_json::Value) -> Self {
+    fn configure(config: serde_json::Value) -> Result<Self, Error> {
         let multiplier = config["multiplier"].as_f64().unwrap_or(0.0);
-        Self { value: multiplier }
+        Ok(Self { value: multiplier })
     }
 
     #[allow(clippy::cast_possible_truncation)]

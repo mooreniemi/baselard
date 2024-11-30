@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::component::{Component, Data, DataType};
+use crate::component::{Component, Data, DataType, Error};
 use crate::dag::DAGError;
 
 pub struct CrashTestDummy {
@@ -9,13 +9,13 @@ pub struct CrashTestDummy {
 }
 
 impl Component for CrashTestDummy {
-    fn configure(config: Value) -> Self {
+    fn configure(config: Value) -> Result<Self, Error> {
         let fail = config["fail"].as_bool().unwrap_or(false);
         let sleep_duration_ms = config["sleep_duration_ms"].as_u64();
-        CrashTestDummy {
+        Ok(CrashTestDummy {
             fail,
             sleep_duration_ms,
-        }
+        })
     }
 
     fn execute(&self, _input: Data) -> Result<Data, DAGError> {

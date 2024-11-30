@@ -1,13 +1,13 @@
 use serde_json::{json, Value};
 
-use crate::component::{Component, Data, DataType};
+use crate::component::{Component, Data, DataType, Error};
 use crate::dag::DAGError;
 
 pub struct FlexibleWildcardProcessor;
 
 impl Component for FlexibleWildcardProcessor {
-    fn configure(_: Value) -> Self {
-        FlexibleWildcardProcessor
+    fn configure(_: Value) -> Result<Self, Error> {
+        Ok(FlexibleWildcardProcessor)
     }
 
     fn execute(&self, input: Data) -> Result<Data, DAGError> {

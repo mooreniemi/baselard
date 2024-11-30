@@ -270,7 +270,11 @@ impl Data {
 }
 
 pub trait Component: Send + Sync + 'static {
-    fn configure(config: Value) -> Self
+    /// Configure a new component instance from the provided configuration
+    ///
+    /// # Errors
+    /// Returns an Error if the configuration is invalid or cannot be parsed
+    fn configure(config: Value) -> Result<Self, Error>
     where
         Self: Sized;
 
@@ -278,6 +282,7 @@ pub trait Component: Send + Sync + 'static {
     ///
     /// # Errors
     /// Returns a `DAGError` if the component execution fails
+    // FIXME: probably should return an Error, not DAGError
     fn execute(&self, input: Data) -> Result<Data, DAGError>;
 
     fn input_type(&self) -> DataType;
@@ -293,7 +298,7 @@ struct ComponentKey {
     config_hash: u64,
 }
 
-type RegisteredComponentFactory = Arc<dyn Fn(Value) -> Arc<dyn Component> + Send + Sync>;
+type RegisteredComponentFactory = Arc<dyn Fn(Value) -> Result<Arc<dyn Component>, Error> + Send + Sync>;
 
 pub struct Registry {
     unconfigured_component_factories: HashMap<ComponentType, RegisteredComponentFactory>,
@@ -319,7 +324,11 @@ impl Registry {
     pub fn register<C: Component + 'static>(&mut self, name: &str) {
         self.unconfigured_component_factories.insert(
             name.to_string(),
-            Arc::new(|config| Arc::new(C::configure(config)) as Arc<dyn Component>),
+            Arc::new(|config| -> Result<Arc<dyn Component>, Error> {
+                C::configure(config)
+                    .map(|component| Arc::new(component) as Arc<dyn Component>)
+                    .map_err(|e| Error::ConfigurationError(e.to_string()))
+            }),
         );
     }
 
@@ -351,14 +360,13 @@ impl Registry {
             .ok_or_else(|| Error::NotRegistered(name.to_string()))?;
 
         println!("Configured component cache miss for {name}");
-        let component = factory(config.clone());
+        let component = factory(config.clone())?;
+
         if let Ok(mut cache) = self.configured_component_cache.write() {
             cache.insert(key, Arc::clone(&component));
             Ok(component)
         } else {
-            Err(Error::CacheError(
-                "Failed to acquire write lock".to_string(),
-            ))
+            Err(Error::CacheError("Failed to acquire write lock".to_string()))
         }
     }
 
@@ -396,6 +404,7 @@ impl std::fmt::Debug for Registry {
 pub enum Error {
     NotRegistered(String),
     CacheError(String),
+    ConfigurationError(String),
 }
 
 impl std::fmt::Display for Error {
@@ -405,6 +414,7 @@ impl std::fmt::Display for Error {
                 write!(f, "Component type '{name}' not registered")
             }
             Error::CacheError(msg) => write!(f, "Component cache error: {msg}"),
+            Error::ConfigurationError(err) => write!(f, "Component configuration error: {err}"),
         }
     }
 }

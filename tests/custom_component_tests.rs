@@ -1,6 +1,6 @@
 use baselard::cache::Cache;
 use baselard::component::Registry;
-use baselard::component::{Component, Data, DataType};
+use baselard::component::{Component, Data, DataType, Error};
 use baselard::components::adder::Adder;
 use baselard::dag::{DAGConfig, DAGError, DAG, DAGIR};
 use serde_json::json;
@@ -12,9 +12,12 @@ struct Multiplier {
 }
 
 impl Component for Multiplier {
-    fn configure(config: serde_json::Value) -> Self {
-        let multiplier = config["multiplier"].as_f64().unwrap_or(0.0);
-        Self { value: multiplier }
+    fn configure(config: serde_json::Value) -> Result<Self, Error> {
+        // NOTE: purposefully can fail to test configuration error handling
+        let multiplier = config["multiplier"]
+            .as_f64()
+            .ok_or_else(|| Error::ConfigurationError("multiplier must be a number".to_string()))?;
+        Ok(Self { value: multiplier })
     }
 
     #[allow(clippy::cast_possible_truncation)]
@@ -114,9 +117,6 @@ async fn test_chained_operations() {
     assert_eq!(results.get("adder_2"), Some(&Data::Integer(33)));
 }
 
-/// Should configuration be infallible or validated?
-/// For now, we say infallible.
-#[ignore]
 #[tokio::test]
 async fn test_error_handling_config() {
     let registry = setup_test_registry();
@@ -124,16 +124,17 @@ async fn test_error_handling_config() {
     let invalid_config = json!([{
         "id": "mult1",
         "component_type": "Multiplier",
-        "config": { "wrong_field": 2.5 },
+        "config": { "multiplier": "not a number" },
         "inputs": 10
     }]);
 
     let result = DAGIR::from_json(&invalid_config)
         .and_then(|ir| DAG::from_ir(&ir, &registry, DAGConfig::default(), None));
-    assert!(
-        result.is_err(),
-        "Invalid configuration should return an error"
-    );
+
+    assert!(matches!(
+        result,
+        Err(e) if e.to_string().contains("multiplier must be a number")
+    ));
 }
 
 #[tokio::test]

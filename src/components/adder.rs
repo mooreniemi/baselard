@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::component::{Component, Data, DataType};
+use crate::component::{Component, Data, DataType, Error};
 use crate::dag::DAGError;
 
 pub struct Adder {
@@ -8,10 +8,10 @@ pub struct Adder {
 }
 
 impl Component for Adder {
-    fn configure(config: Value) -> Self {
-        Adder {
+    fn configure(config: Value) -> Result<Self, Error> {
+        Ok(Adder {
             value: i32::try_from(config["value"].as_i64().unwrap()).unwrap(),
-        }
+        })
     }
 
     fn execute(&self, input: Data) -> Result<Data, DAGError> {

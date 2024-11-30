@@ -344,6 +344,19 @@ pub struct DAG {
     ir_hash: u64,
 }
 
+impl std::fmt::Debug for DAG {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DAG")
+            .field("dag_config", &self.config)
+            .field("nodes", &self.nodes.keys().collect::<Vec<_>>())
+            .field("edge_count", &self.edges.len())
+            .field("initial_inputs", &self.initial_inputs)
+            .field("has_cache", &self.cache.is_some())
+            .field("ir_hash", &self.ir_hash)
+            .finish()
+    }
+}
+
 impl DAG {
     /// Creates a new DAG from an IR representation
     ///

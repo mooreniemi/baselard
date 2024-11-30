@@ -1,13 +1,13 @@
 use serde_json::Value;
 
-use crate::component::{Component, Data, DataType};
+use crate::component::{Component, Data, DataType, Error};
 use crate::dag::DAGError;
 
 pub struct StringLengthCounter;
 
 impl Component for StringLengthCounter {
-    fn configure(_: Value) -> Self {
-        StringLengthCounter
+    fn configure(_: Value) -> Result<Self, Error> {
+        Ok(StringLengthCounter)
     }
 
     fn execute(&self, input: Data) -> Result<Data, DAGError> {

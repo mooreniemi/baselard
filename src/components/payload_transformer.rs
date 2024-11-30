@@ -1,4 +1,4 @@
-use crate::component::{Component, Data, DataType};
+use crate::component::{Component, Data, DataType, Error};
 use crate::dag::DAGError;
 use indexmap::IndexMap;
 use jq_rs::compile;
@@ -240,31 +240,29 @@ impl Component for PayloadTransformer {
     /// To validate that the program is not infinite, we run it with a timeout once before compiling.
     /// We need to run validation as a separate process because you can't kill the thread and clean up the
     /// C resources that were allocated. Validation cost is paid only once: when configuration happens.
-    fn configure(config: Value) -> Self {
+    fn configure(config: Value) -> Result<Self, Error> {
         println!("PayloadTransformer config: {config:?}");
+
         let expression = config["transformation_expression"]
             .as_str()
-            .unwrap_or(".")
-            .to_string();
-        let max_programs_per_thread = usize::try_from(
-            config["max_programs_per_thread"]
-                .as_u64()
-                .unwrap_or(MAX_PROGRAMS_PER_THREAD as u64),
-        )
-        .expect("Failed to parse max_programs_per_thread");
+            .map_or_else(|| ".".to_string(), String::from);
+
+        let max_programs_per_thread = config["max_programs_per_thread"]
+            .as_u64()
+            .unwrap_or(MAX_PROGRAMS_PER_THREAD as u64)
+            .try_into()
+            .map_err(|e| Error::ConfigurationError(format!("Invalid max_programs_per_thread: {e}")))?;
 
         let validation_data = config.get("validation_data")
-            .expect("validation_data is required for PayloadTransformer");
+            .ok_or_else(|| Error::ConfigurationError("validation_data is required".to_string()))?;
 
-        // Validate the expression
-        if let Err(e) = Self::validate_expression(&expression, validation_data) {
-            panic!("{e}");
-        }
+        Self::validate_expression(&expression, validation_data)
+            .map_err(|e| Error::ConfigurationError(e.to_string()))?;
 
-        PayloadTransformer {
+        Ok(PayloadTransformer {
             expression,
             max_programs_per_thread,
-        }
+        })
     }
 
     fn execute(&self, input: Data) -> Result<Data, DAGError> {

@@ -43,7 +43,6 @@ async fn test_basic_transformation() {
     );
 }
 
-#[ignore]
 #[tokio::test]
 async fn test_invalid_jq_expression() {
     let registry = setup_test_registry();
@@ -70,9 +69,9 @@ async fn test_invalid_jq_expression() {
     assert!(
         matches!(
             result,
-            Err(e) if e.to_string().contains("InvalidProgram")
+            Err(e) if e.to_string().contains("JQ program validation failed")
         ),
-        "Error should mention invalid JQ program"
+        "Error should mention JQ validation failure"
     );
 }
 

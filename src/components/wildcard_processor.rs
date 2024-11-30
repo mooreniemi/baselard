@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use serde_json::{json, Value};
 
-use crate::component::{Component, Data, DataType};
+use crate::component::{Component, Data, DataType, Error};
 use crate::dag::DAGError;
 
 pub struct WildcardProcessor {
@@ -11,7 +11,7 @@ pub struct WildcardProcessor {
 }
 
 impl Component for WildcardProcessor {
-    fn configure(config: Value) -> Self {
+    fn configure(config: Value) -> Result<Self, Error> {
         let expected_input_keys = config["expected_input_keys"]
             .as_array()
             .unwrap_or(&vec![])
@@ -26,10 +26,10 @@ impl Component for WildcardProcessor {
             .filter_map(|v| v.as_str().map(String::from))
             .collect();
 
-        WildcardProcessor {
+        Ok(WildcardProcessor {
             expected_input_keys,
             expected_output_keys,
-        }
+        })
     }
 
     fn execute(&self, input: Data) -> Result<Data, DAGError> {
