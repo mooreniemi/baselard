@@ -206,6 +206,29 @@ impl Data {
             Data::Json(_) => DataType::Json,
         }
     }
+
+    /// Validates if this Data instance matches the expected `DataType`.
+    ///
+    /// This function checks if the current `Data` instance matches the expected `DataType`.
+    /// It supports direct type equivalence, union compatibility, and nested list type compatibility.
+    #[must_use]
+    pub fn validate_type(&self, expected_type: &DataType) -> bool {
+        match expected_type {
+            DataType::Null => matches!(self, Data::Null),
+            DataType::Integer => matches!(self, Data::Integer(_)),
+            DataType::Float => matches!(self, Data::Float(_)),
+            DataType::Text => matches!(self, Data::Text(_)),
+            DataType::List(element_type) => {
+                if let Data::List(items) = self {
+                    items.iter().all(|item| item.validate_type(element_type))
+                } else {
+                    false
+                }
+            }
+            DataType::Json => matches!(self, Data::Json(_)),
+            DataType::Union(types) => types.iter().any(|t| self.validate_type(t)),
+        }
+    }
 }
 
 pub trait Component: Send + Sync + 'static {

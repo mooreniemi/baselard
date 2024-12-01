@@ -233,7 +233,7 @@ impl DAG {
             println!("Component creation successful for node {}", node.id);
 
             if let Some(input) = &node.inputs {
-                if !Self::validate_data_type(input, &component.input_type()) {
+                if !input.validate_type(&component.input_type()) {
                     return Err(format!(
                         "Node {} initial input type mismatch. Expected {:?}, got {:?}",
                         node.id,
@@ -283,27 +283,7 @@ impl DAG {
         Ok(dag)
     }
 
-    fn validate_data_type(data: &Data, expected_type: &DataType) -> bool {
-        match expected_type {
-            DataType::Null => matches!(data, Data::Null),
-            DataType::Integer => matches!(data, Data::Integer(_)),
-            DataType::Float => matches!(data, Data::Float(_)),
-            DataType::Text => matches!(data, Data::Text(_)),
-            DataType::List(element_type) => {
-                if let Data::List(items) = data {
-                    items
-                        .iter()
-                        .all(|item| DAG::validate_data_type(item, element_type))
-                } else {
-                    false
-                }
-            }
-            DataType::Json => matches!(data, Data::Json(_)),
-            DataType::Union(types) => types.iter().any(|t| DAG::validate_data_type(data, t)),
-        }
-    }
-
-    /// Execute the DAG with the given request ID.
+    /// Execute the DAG with the given request ID, or a random UUID if none is provided.
     ///
     /// # Errors
     ///
@@ -443,6 +423,14 @@ impl DAG {
         (notifiers, shared_results)
     }
 
+    /// Driving method that:
+    /// - Spawns a task for each node
+    /// - Awaits all tasks to completion
+    /// - Collects results from shared results
+    /// - Handles any errors that occurred during execution
+    /// - Aborts remaining nodes if a node fails
+    ///
+    /// Returns the final results of the DAG execution.
     async fn execute_nodes(
         &self,
         sorted_nodes: Vec<NodeID>,
@@ -542,6 +530,13 @@ impl DAG {
         Ok(final_results)
     }
 
+    /// Driving method that:
+    /// - Sets up dependency receivers
+    /// - Starts a blocking task to execute the node
+    /// - Awaits the result of the node execution with a timeout
+    /// - Stores the result in shared results, notifies receivers
+    ///
+    /// Returns a handle to the node execution task.
     fn spawn_node_task(
         &self,
         node_id: &NodeID,
@@ -578,7 +573,7 @@ impl DAG {
                 .await?;
             }
 
-            let execution = Self::prepare_node_execution(
+            let node_execution_handle = Self::start_blocking_node_execution(
                 node_id.clone(),
                 request_id,
                 nodes,
@@ -589,9 +584,9 @@ impl DAG {
             );
 
             let result =
-                Self::execute_with_timeout(execution, timeout_ms, &node_id, start_time).await?;
+                Self::await_node_execution_with_timeout(node_execution_handle, timeout_ms, &node_id, start_time).await?;
 
-            Self::handle_execution_result(result, &shared_results, &notifiers, start_time);
+            Self::process_node_execution_result(result, &shared_results, &notifiers, start_time);
 
             Ok(())
         })
@@ -613,6 +608,8 @@ impl DAG {
         receivers
     }
 
+    /// We've determined that a node has dependencies, so we need to wait
+    /// for them to be satisfied before we can execute the node.
     async fn wait_for_dependencies(
         receivers: &mut HashMap<NodeID, watch::Receiver<()>>,
         node_id: &NodeID,
@@ -664,7 +661,10 @@ impl DAG {
         Ok(())
     }
 
-    fn prepare_node_execution(
+    /// We've determined that a node's dependencies are satisfied, so we
+    /// start a blocking task to execute the node. We'll return a handle
+    /// to this task so we can await its result later.
+    fn start_blocking_node_execution(
         node_id: NodeID,
         request_id: RequestId,
         nodes: Arc<HashMap<NodeID, Arc<dyn Component>>>,
@@ -708,7 +708,9 @@ impl DAG {
         })
     }
 
-    async fn execute_with_timeout(
+    /// We've started a blocking task to execute a node, and we want to
+    /// await its result with a timeout, handling errors appropriately.
+    async fn await_node_execution_with_timeout(
         execution: task::JoinHandle<Result<(NodeID, Data), DAGError>>,
         timeout_ms: Option<u64>,
         node_id: &NodeID,
@@ -720,7 +722,7 @@ impl DAG {
             match timeout(Duration::from_millis(ms), execution).await {
                 Ok(result) => {
                     println!(
-                        "[{:.3}s] Node {} execution took {:.3}s (was within timeout)",
+                        "[{:.3}s] Node {} await took {:.3}s (was within timeout)",
                         start_time.elapsed().as_secs_f32(),
                         node_id,
                         execution_start.elapsed().as_secs_f32()
@@ -743,7 +745,9 @@ impl DAG {
         }
     }
 
-    fn handle_execution_result(
+    /// We've received the result of a node execution, so we need to
+    /// store it in the shared results and notify any dependent nodes.
+    fn process_node_execution_result(
         result: (NodeID, Data),
         shared_results: &SharedResults,
         notifiers: &Notifiers,
@@ -793,7 +797,7 @@ impl DAG {
             if edges.len() == 1 {
                 let edge = &edges[0];
                 if let Some(output) = results.get(&edge.source) {
-                    if !Self::validate_data_type(output, expected_type) {
+                    if !output.validate_type(expected_type) {
                         return Err(DAGError::TypeMismatch {
                             node_id: node_id.to_string(),
                             expected: expected_type.clone(),
