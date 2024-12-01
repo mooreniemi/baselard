@@ -1,24 +1,32 @@
-[
+{
+  "alias": "text_tokenization",
+  "metadata": {
+    "description": "Pipeline that splits text into tokens using whitespace",
+    "version": "1.0",
+    "tags": ["text", "tokenization", "preprocessing"]
+  },
+  "nodes": [
     {
-        "id": "tokenize_text",
-        "component_type": "PayloadTransformer",
-        "config": {
-            "transformation_expression": "
-                def tokenize: split(\" \");
-                { original: .text, tokens: .text | tokenize }
-            ",
-            "validation_data": {
-                "input": {
-                    "text": "hello world test"
-                },
-                "expected_output": {
-                    "original": "hello world test",
-                    "tokens": ["hello", "world", "test"]
-                }
-            }
-        },
-        "inputs": {
-            "text": "The quick brown fox jumps over the lazy dog"
+      "id": "tokenize_text",
+      "component_type": "PayloadTransformer",
+      "config": {
+        "transformation_expression": "
+          def tokenize: split(\" \");
+          { original: .text, tokens: .text | tokenize }
+        ",
+        "validation_data": {
+          "input": {
+            "text": "hello world test"
+          },
+          "expected_output": {
+            "original": "hello world test",
+            "tokens": ["hello", "world", "test"]
+          }
         }
+      },
+      "inputs": {
+        "text": "The quick brown fox jumps over the lazy dog"
+      }
     }
-]
+  ]
+}

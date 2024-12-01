@@ -1,41 +1,49 @@
-[
+{
+  "alias": "one_hot_encoding",
+  "metadata": {
+    "description": "Pipeline that performs one-hot encoding on categorical values",
+    "version": "1.0",
+    "tags": ["encoding", "categorical", "preprocessing"]
+  },
+  "nodes": [
     {
-        "id": "one_hot_encode_categories",
-        "component_type": "PayloadTransformer",
-        "config": {
-            "transformation_expression": "
-                .values |
-                def unique_categories: unique;
+      "id": "one_hot_encode_categories",
+      "component_type": "PayloadTransformer",
+      "config": {
+        "transformation_expression": "
+          .values |
+          def unique_categories: unique;
 
-                def one_hot_encode:
-                    unique_categories as $unique |
-                    map(
-                        . as $item |
-                        $unique |
-                        map(
-                            if . == $item then 1 else 0 end
-                        )
-                    );
+          def one_hot_encode:
+            unique_categories as $unique |
+            map(
+              . as $item |
+              $unique |
+              map(
+                if . == $item then 1 else 0 end
+              )
+            );
 
-                {
-                    original: .,
-                    unique_categories: unique_categories,
-                    one_hot_encoded: one_hot_encode
-                }
-            ",
-            "validation_data": {
-                "input": {
-                    "values": ["test1", "test2", "test1"]
-                },
-                "expected_output": {
-                    "original": ["test1", "test2", "test1"],
-                    "unique_categories": ["test1", "test2"],
-                    "one_hot_encoded": [[1,0], [0,1], [1,0]]
-                }
-            }
-        },
-        "inputs": {
-            "values": ["apple", "banana", "apple", "cherry", "banana"]
+          {
+            original: .,
+            unique_categories: unique_categories,
+            one_hot_encoded: one_hot_encode
+          }
+        ",
+        "validation_data": {
+          "input": {
+            "values": ["test1", "test2", "test1"]
+          },
+          "expected_output": {
+            "original": ["test1", "test2", "test1"],
+            "unique_categories": ["test1", "test2"],
+            "one_hot_encoded": [[1,0], [0,1], [1,0]]
+          }
         }
+      },
+      "inputs": {
+        "values": ["apple", "banana", "apple", "cherry", "banana"]
+      }
     }
-]
+  ]
+}

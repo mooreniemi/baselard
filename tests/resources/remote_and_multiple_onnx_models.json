@@ -1,4 +1,11 @@
-[
+{
+  "alias": "multi_model_comparison",
+  "metadata": {
+    "description": "Pipeline that compares predictions from remote and multiple ONNX models",
+    "version": "1.0",
+    "tags": ["ml", "inference", "comparison", "remote", "onnx"]
+  },
+  "nodes": [
     {
       "id": "sample_data",
       "component_type": "PayloadTransformer",
@@ -143,3 +150,4 @@
       "depends_on": ["combine_inputs"]
     }
   ]
+}

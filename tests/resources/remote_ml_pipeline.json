@@ -1,62 +1,70 @@
-[
-  {
-    "id": "sample_data",
-    "component_type": "PayloadTransformer",
-    "config": {
-      "transformation_expression": "{ \"features\": [1.0, 2.0, 3.0, 4.0] }",
-      "validation_data": {
-        "input": {},
-        "expected_output": {
+{
+  "alias": "remote_ml_inference",
+  "metadata": {
+    "description": "Pipeline that processes features through a remote ML model endpoint",
+    "version": "1.0",
+    "tags": ["ml", "inference", "remote"]
+  },
+  "nodes": [
+    {
+      "id": "sample_data",
+      "component_type": "PayloadTransformer",
+      "config": {
+        "transformation_expression": "{ \"features\": [1.0, 2.0, 3.0, 4.0] }",
+        "validation_data": {
+          "input": {},
+          "expected_output": {
+            "features": [1.0, 2.0, 3.0, 4.0]
+          }
+        }
+      },
+      "inputs": {
+        "data": {
           "features": [1.0, 2.0, 3.0, 4.0]
         }
       }
     },
-    "inputs": {
-      "data": {
-        "features": [1.0, 2.0, 3.0, 4.0]
-      }
+    {
+      "id": "extract_features",
+      "component_type": "PayloadTransformer",
+      "config": {
+        "transformation_expression": "{ type: \"list\", values: (.features | map({ type: \"float\", value: . })) }",
+        "validation_data": {
+          "input": {
+            "features": [1.0, 2.0, 3.0, 4.0]
+          },
+          "expected_output": {
+            "type": "list",
+            "values": [
+              {"type": "float", "value": 1.0},
+              {"type": "float", "value": 2.0},
+              {"type": "float", "value": 3.0},
+              {"type": "float", "value": 4.0}
+            ]
+          }
+        }
+      },
+      "depends_on": ["sample_data"]
+    },
+    {
+      "id": "json_to_data",
+      "component_type": "JsonToDataProcessor",
+      "config": {},
+      "depends_on": ["extract_features"]
+    },
+    {
+      "id": "ml_prediction",
+      "component_type": "MLModel",
+      "config": {
+        "remote_endpoint": "http://127.0.0.1:4000/process"
+      },
+      "depends_on": ["json_to_data"]
+    },
+    {
+      "id": "data_to_json",
+      "component_type": "DataToJsonProcessor",
+      "config": {},
+      "depends_on": ["ml_prediction"]
     }
-  },
-  {
-    "id": "extract_features",
-    "component_type": "PayloadTransformer",
-    "config": {
-      "transformation_expression": "{ type: \"list\", values: (.features | map({ type: \"float\", value: . })) }",
-      "validation_data": {
-        "input": {
-          "features": [1.0, 2.0, 3.0, 4.0]
-        },
-        "expected_output": {
-          "type": "list",
-          "values": [
-            {"type": "float", "value": 1.0},
-            {"type": "float", "value": 2.0},
-            {"type": "float", "value": 3.0},
-            {"type": "float", "value": 4.0}
-          ]
-        }
-      }
-    },
-    "depends_on": ["sample_data"]
-  },
-  {
-    "id": "json_to_data",
-    "component_type": "JsonToDataProcessor",
-    "config": {},
-    "depends_on": ["extract_features"]
-  },
-  {
-    "id": "ml_prediction",
-    "component_type": "MLModel",
-    "config": {
-      "remote_endpoint": "http://127.0.0.1:4000/process"
-    },
-    "depends_on": ["json_to_data"]
-  },
-  {
-    "id": "data_to_json",
-    "component_type": "DataToJsonProcessor",
-    "config": {},
-    "depends_on": ["ml_prediction"]
-  }
-]
+  ]
+}

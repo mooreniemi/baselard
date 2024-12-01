@@ -1,4 +1,11 @@
-[
+{
+  "alias": "price_analysis_pipeline",
+  "metadata": {
+    "description": "Pipeline that processes and analyzes item prices, combining statistical analysis with message length calculations",
+    "version": "1.0",
+    "tags": ["analysis", "pricing", "statistics"]
+  },
+  "nodes": [
     {
       "id": "raw_numbers",
       "component_type": "PayloadTransformer",
@@ -168,3 +175,4 @@
       "depends_on": ["combine_inputs"]
     }
   ]
+}

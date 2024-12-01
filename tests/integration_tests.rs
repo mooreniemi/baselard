@@ -6,7 +6,6 @@ use baselard::dag::DAGError;
 use baselard::dag::{DAGConfig, DAG, DAGIR};
 use indexmap::IndexMap;
 use serde_json::json;
-use serde_json::Value;
 use std::sync::Arc;
 
 /// Initialize and return a shared `ComponentRegistry`
@@ -24,44 +23,47 @@ fn setup_registry() -> Registry {
 
 #[tokio::test]
 async fn test_optimal_makespan() {
-    let json_config = json!([
-        {
-            "id": "fast_1",
-            "component_type": "CrashTestDummy",
-            "config": {
-                "fail": false,
-                "sleep_duration_ms": 50
+    let json_config = json!({
+        "alias": "optimal_makespan_test",
+        "nodes": [
+            {
+                "id": "fast_1",
+                "component_type": "CrashTestDummy",
+                "config": {
+                    "fail": false,
+                    "sleep_duration_ms": 50
+                },
+                "depends_on": []
             },
-            "depends_on": []
-        },
-        {
-            "id": "fast_2",
-            "component_type": "CrashTestDummy",
-            "config": {
-                "fail": false,
-                "sleep_duration_ms": 50
+            {
+                "id": "fast_2",
+                "component_type": "CrashTestDummy",
+                "config": {
+                    "fail": false,
+                    "sleep_duration_ms": 50
+                },
+                "depends_on": ["fast_1"]
             },
-            "depends_on": ["fast_1"]
-        },
-        {
-            "id": "slow_1",
-            "component_type": "CrashTestDummy",
-            "config": {
-                "fail": false,
-                "sleep_duration_ms": 100
+            {
+                "id": "slow_1",
+                "component_type": "CrashTestDummy",
+                "config": {
+                    "fail": false,
+                    "sleep_duration_ms": 100
+                },
+                "depends_on": []
             },
-            "depends_on": []
-        },
-        {
-            "id": "final",
-            "component_type": "CrashTestDummy",
-            "config": {
-                "fail": false,
-                "sleep_duration_ms": 10
-            },
-            "depends_on": ["slow_1", "fast_2"]
-        }
-    ]);
+            {
+                "id": "final",
+                "component_type": "CrashTestDummy",
+                "config": {
+                    "fail": false,
+                    "sleep_duration_ms": 10
+                },
+                "depends_on": ["slow_1", "fast_2"]
+            }
+        ]
+    });
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
@@ -81,44 +83,47 @@ async fn test_optimal_makespan() {
 
 #[tokio::test]
 async fn test_optimal_failspan() {
-    let json_config = json!([
-        {
-            "id": "fast_1",
-            "component_type": "CrashTestDummy",
-            "config": {
-                "fail": false,
-                "sleep_duration_ms": 50
+    let json_config = json!({
+        "alias": "optimal_failspan_test",
+        "nodes": [
+            {
+                "id": "fast_1",
+                "component_type": "CrashTestDummy",
+                "config": {
+                    "fail": false,
+                    "sleep_duration_ms": 50
+                },
+                "depends_on": []
             },
-            "depends_on": []
-        },
-        {
-            "id": "fast_2",
-            "component_type": "CrashTestDummy",
-            "config": {
-                "fail": true,  // This will fail after 20ms
-                "sleep_duration_ms": 20
+            {
+                "id": "fast_2",
+                "component_type": "CrashTestDummy",
+                "config": {
+                    "fail": true,  // This will fail after 20ms
+                    "sleep_duration_ms": 20
+                },
+                "depends_on": ["fast_1"]
             },
-            "depends_on": ["fast_1"]
-        },
-        {
-            "id": "slow_1",
-            "component_type": "CrashTestDummy",
-            "config": {
-                "fail": false,
-                "sleep_duration_ms": 100  // This should get cancelled
+            {
+                "id": "slow_1",
+                "component_type": "CrashTestDummy",
+                "config": {
+                    "fail": false,
+                    "sleep_duration_ms": 100  // This should get cancelled
+                },
+                "depends_on": []
             },
-            "depends_on": []
-        },
-        {
-            "id": "final",
-            "component_type": "CrashTestDummy",
-            "config": {
-                "fail": false,
-                "sleep_duration_ms": 10
-            },
-            "depends_on": ["slow_1", "fast_2"]
-        }
-    ]);
+            {
+                "id": "final",
+                "component_type": "CrashTestDummy",
+                "config": {
+                    "fail": false,
+                    "sleep_duration_ms": 10
+                },
+                "depends_on": ["slow_1", "fast_2"]
+            }
+        ]
+    });
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
@@ -139,9 +144,11 @@ async fn test_optimal_failspan() {
 
 #[tokio::test]
 async fn test_simple_seq_adds_up() {
-    let json_config = json!([
-        {
-            "id": "adder_1",
+    let json_config = json!({
+        "alias": "simple_seq_adds_up_test",
+        "nodes": [
+            {
+                "id": "adder_1",
             "component_type": "Adder",
             "config": { "value": 5 },
             "depends_on": [],
@@ -152,8 +159,9 @@ async fn test_simple_seq_adds_up() {
             "component_type": "Adder",
             "config": { "value": 10 },
             "depends_on": ["adder_1"]
-        }
-    ]);
+            }
+        ]
+    });
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
@@ -171,68 +179,71 @@ async fn test_simple_seq_adds_up() {
 #[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn test_complex_dag_execution() {
-    let json_config = json!([
-        {
-            "id": "string_counter_1",
-            "component_type": "StringLengthCounter",
-            "config": {},
-            "depends_on": [],
-            "inputs": "Hello, world!"
-        },
-        {
-            "id": "adder_1",
-            "component_type": "Adder",
-            "config": { "value": 5 },
-            "depends_on": ["string_counter_1"]
-        },
-        {
-            "id": "adder_2",
-            "component_type": "Adder",
-            "config": { "value": 10 },
-            "depends_on": ["adder_1"]
-        },
-        {
-            "id": "adder_3",
-            "component_type": "Adder",
-            "config": { "value": 15 },
-            "depends_on": ["adder_1", "adder_2"]
-        },
-        {
-            "id": "wildcard_1",
-            "component_type": "WildcardProcessor",
-            "config": {
-                "expected_input_keys": ["key1", "key2"],
-                "expected_output_keys": ["key2", "key3"]
+    let json_config = json!({
+        "alias": "complex_dag_execution_test",
+        "nodes": [
+            {
+                "id": "string_counter_1",
+                "component_type": "StringLengthCounter",
+                "config": {},
+                "depends_on": [],
+                "inputs": "Hello, world!"
             },
-            "depends_on": [],
-            "inputs": { "key1": "value1", "key2": 42 }
-        },
-        {
-            "id": "wildcard_2",
-            "component_type": "WildcardProcessor",
-            "config": {
-                "expected_input_keys": ["key2", "key3"],
-                "expected_output_keys": ["key1"]
+            {
+                "id": "adder_1",
+                "component_type": "Adder",
+                "config": { "value": 5 },
+                "depends_on": ["string_counter_1"]
             },
-            "depends_on": ["wildcard_1"]
-        },
-        {
-            "id": "flexible_wildcard_1",
-            "component_type": "FlexibleWildcardProcessor",
-            "config": {},
-            "depends_on": ["adder_3"],
-            "inputs": { "key1": "value1", "key2": 42 }
-        },
-        {
-            "id": "crash_dummy_1",
-            "component_type": "CrashTestDummy",
-            "config": {
+            {
+                "id": "adder_2",
+                "component_type": "Adder",
+                "config": { "value": 10 },
+                "depends_on": ["adder_1"]
+            },
+            {
+                "id": "adder_3",
+                "component_type": "Adder",
+                "config": { "value": 15 },
+                "depends_on": ["adder_1", "adder_2"]
+            },
+            {
+                "id": "wildcard_1",
+                "component_type": "WildcardProcessor",
+                "config": {
+                    "expected_input_keys": ["key1", "key2"],
+                    "expected_output_keys": ["key2", "key3"]
+                },
+                "depends_on": [],
+                "inputs": { "key1": "value1", "key2": 42 }
+            },
+            {
+                "id": "wildcard_2",
+                "component_type": "WildcardProcessor",
+                "config": {
+                    "expected_input_keys": ["key2", "key3"],
+                    "expected_output_keys": ["key1"]
+                },
+                "depends_on": ["wildcard_1"]
+            },
+            {
+                "id": "flexible_wildcard_1",
+                "component_type": "FlexibleWildcardProcessor",
+                "config": {},
+                "depends_on": ["adder_3"],
+                "inputs": { "key1": "value1", "key2": 42 }
+            },
+            {
+                "id": "crash_dummy_1",
+                "component_type": "CrashTestDummy",
+                "config": {
                 "fail": false,
                 "sleep_duration_ms": 20
-            },
-            "depends_on": ["wildcard_2"]
-        }
-    ]);
+                },
+                "depends_on": ["wildcard_2"]
+            }
+        ]
+    });
 
     let registry = setup_registry();
 
@@ -302,24 +313,27 @@ async fn test_complex_dag_execution() {
 
 #[tokio::test]
 async fn test_dag_execution_with_errors() {
-    let json_config = json!([
-        {
-            "id": "adder_1",
-            "component_type": "Adder",
-            "config": { "value": 10 },
-            "depends_on": [],
-            "inputs": 42
-        },
-        {
-            "id": "crash_dummy_1",
-            "component_type": "CrashTestDummy",
-            "config": {
-                "fail": true,
-                "sleep_duration_ms": 20
+    let json_config = json!({
+        "alias": "error_test",
+        "nodes": [
+            {
+                "id": "adder_1",
+                "component_type": "Adder",
+                "config": { "value": 10 },
+                "depends_on": [],
+                "inputs": 42
             },
-            "depends_on": ["adder_1"]
-        }
-    ]);
+            {
+                "id": "crash_dummy_1",
+            "component_type": "CrashTestDummy",
+                "config": {
+                    "fail": true,
+                    "sleep_duration_ms": 20
+                },
+                "depends_on": ["adder_1"]
+            }
+        ]
+    });
 
     let registry = setup_registry();
 
@@ -344,24 +358,27 @@ async fn test_dag_execution_with_timeout() {
     let dag_config = DAGConfig::cache_off();
     let timeout_ms = dag_config.per_node_timeout_ms;
 
-    let json_config = json!([
-        {
-            "id": "adder_1",
-            "component_type": "Adder",
-            "config": { "value": 10 },
-            "depends_on": [],
-            "inputs": 42
-        },
-        {
-            "id": "crash_dummy_1",
-            "component_type": "CrashTestDummy",
-            "config": {
-                "fail": false,
-                "sleep_duration_ms": timeout_ms.unwrap() + 100
+    let json_config = json!({
+        "alias": "timeout_test",
+        "nodes": [
+            {
+                "id": "adder_1",
+                "component_type": "Adder",
+                "config": { "value": 10 },
+                "depends_on": [],
+                "inputs": 42
             },
-            "depends_on": ["adder_1"]
-        }
-    ]);
+            {
+                "id": "crash_dummy_1",
+                "component_type": "CrashTestDummy",
+                "config": {
+                    "fail": false,
+                    "sleep_duration_ms": timeout_ms.unwrap() + 100
+                },
+                "depends_on": ["adder_1"]
+            }
+        ]
+    });
 
     let registry = setup_registry();
 
@@ -385,27 +402,30 @@ async fn test_dag_execution_with_timeout() {
 
 #[tokio::test]
 async fn test_dag_cycle_detection() {
-    let json_config = json!([
-        {
-            "id": "node_1",
+    let json_config = json!({
+        "alias": "cycle_test",
+        "nodes": [
+            {
+                "id": "node_1",
             "component_type": "Adder",
             "config": { "value": 5 },
-            "depends_on": ["node_2"],
-            "inputs": 42
-        },
-        {
-            "id": "node_2",
-            "component_type": "Adder",
-            "config": { "value": 10 },
-            "depends_on": ["node_3"]
-        },
-        {
-            "id": "node_3",
-            "component_type": "Adder",
-            "config": { "value": 15 },
-            "depends_on": ["node_1"]
-        }
-    ]);
+                "depends_on": ["node_2"],
+                "inputs": 42
+            },
+            {
+                "id": "node_2",
+                "component_type": "Adder",
+                "config": { "value": 10 },
+                "depends_on": ["node_3"]
+            },
+            {
+                "id": "node_3",
+                "component_type": "Adder",
+                "config": { "value": 15 },
+                "depends_on": ["node_1"]
+            }
+        ]
+    });
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
@@ -432,7 +452,10 @@ async fn test_dag_cycle_detection() {
 
 #[tokio::test]
 async fn test_dag_empty_graph() {
-    let json_config = json!([]);
+    let json_config = json!({
+        "alias": "empty_graph_test",
+        "nodes": []
+    });
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
@@ -452,12 +475,17 @@ async fn test_dag_empty_graph() {
 
 #[tokio::test]
 async fn test_dag_invalid_component_type() {
-    let json_config = json!([{
-        "id": "invalid_node",
-        "component_type": "NonExistentComponent",
-        "config": {},
-        "depends_on": []
-    }]);
+    let json_config = json!({
+        "alias": "invalid_component_type_test",
+        "nodes": [
+            {
+                "id": "invalid_node",
+                "component_type": "NonExistentComponent",
+                "config": {},
+                "depends_on": []
+            }
+        ]
+    });
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
@@ -471,15 +499,18 @@ async fn test_dag_invalid_component_type() {
 
 #[tokio::test]
 async fn test_dag_invalid_dependency() {
-    let json_config = json!([
-        {
-            "id": "adder_1",
-            "component_type": "Adder",
-            "config": { "value": 5 },
-            "depends_on": ["non_existent_node"],
-            "inputs": 42
-        }
-    ]);
+    let json_config = json!({
+        "alias": "invalid_dependency_test",
+        "nodes": [
+            {
+                "id": "adder_1",
+                "component_type": "Adder",
+                "config": { "value": 5 },
+                "depends_on": ["non_existent_node"],
+                "inputs": 42
+            }
+        ]
+    });
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
@@ -493,21 +524,24 @@ async fn test_dag_invalid_dependency() {
 
 #[tokio::test]
 async fn test_dag_duplicate_node_ids() {
-    let json_config = json!([
-        {
-            "id": "node_1",
-            "component_type": "Adder",
-            "config": { "value": 5 },
-            "depends_on": [],
-            "inputs": 42
+    let json_config = json!({
+        "alias": "duplicate_node_ids_test",
+        "nodes": [
+            {
+                "id": "node_1",
+                "component_type": "Adder",
+                "config": { "value": 5 },
+                "depends_on": [],
+                "inputs": 42
         },
         {
             "id": "node_1",
             "component_type": "Adder",
-            "config": { "value": 10 },
-            "depends_on": []
-        }
-    ]);
+                "config": { "value": 10 },
+                "depends_on": []
+            }
+        ]
+    });
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
@@ -522,20 +556,28 @@ async fn test_dag_duplicate_node_ids() {
 #[tokio::test]
 async fn test_dag_invalid_json_config() {
     let invalid_configs = vec![
-        json!([{
-            "id": "node_1",
-            "config": {}
-        }]),
-        json!([{
-            "id": 123,
-            "component_type": "Adder",
-            "config": {}
-        }]),
-        json!([{
-            "id": "",
-            "component_type": "Adder",
-            "config": {}
-        }]),
+        json!({
+            "alias": "no component type",
+            "nodes": [{
+                "id": "node_1",
+                "config": {}
+            }]
+        }),
+        json!({
+            "alias": "no config",
+            "nodes": [{
+                "id": 123,
+                "component_type": "Adder",
+                "config": {}
+            }]
+        }),
+        json!({
+            "alias": "no id",
+            "nodes": [{
+                "component_type": "Adder",
+                "config": {}
+            }]
+        }),
     ];
 
     for config in invalid_configs {
@@ -551,11 +593,11 @@ async fn test_dag_invalid_json_config() {
 
 #[tokio::test]
 async fn test_dag_large_parallel_execution() {
-    let mut config_array = Vec::new();
+    let mut nodes = Vec::new();
     let num_parallel_nodes = 50;
 
     for i in 0..num_parallel_nodes {
-        config_array.push(json!({
+        nodes.push(json!({
             "id": format!("adder_{}", i),
             "component_type": "Adder",
             "config": { "value": i },
@@ -569,14 +611,22 @@ async fn test_dag_large_parallel_execution() {
         depends_on.push(format!("adder_{i}"));
     }
 
-    config_array.push(json!({
+    nodes.push(json!({
         "id": "final_node",
         "component_type": "Adder",
         "config": { "value": 0 },
         "depends_on": depends_on
     }));
 
-    let json_config = Value::Array(config_array);
+    let json_config = json!({
+        "alias": "large_parallel_test",
+        "metadata": {
+            "description": "Test DAG with 50 parallel nodes feeding into a single final node",
+            "version": "1.0"
+        },
+        "nodes": nodes
+    });
+
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
     let dag_config = DAGConfig::cache_off();
@@ -601,9 +651,11 @@ async fn test_dag_large_parallel_execution() {
 
 #[tokio::test]
 async fn test_dag_cleanup_on_failure() {
-    let json_config = json!([
-        {
-            "id": "crash_dummy_1",
+    let json_config = json!({
+        "alias": "cleanup_on_failure_test",
+        "nodes": [
+            {
+                "id": "crash_dummy_1",
             "component_type": "CrashTestDummy",
             "config": {
                 "fail": false,
@@ -619,8 +671,9 @@ async fn test_dag_cleanup_on_failure() {
                 "sleep_duration_ms": 50
             },
             "depends_on": ["crash_dummy_1"]
-        }
-    ]);
+            }
+        ]
+    });
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
@@ -644,9 +697,11 @@ async fn test_dag_with_caching() {
         10_000,
     ));
 
-    let json_config = json!([
-        {
-            "id": "adder_1",
+    let json_config = json!({
+        "alias": "caching_test",
+        "nodes": [
+            {
+                "id": "adder_1",
             "component_type": "Adder",
             "config": { "value": 5 },
             "depends_on": [],
@@ -657,8 +712,9 @@ async fn test_dag_with_caching() {
             "component_type": "Adder",
             "config": { "value": 10 },
             "depends_on": ["adder_1"]
-        }
-    ]);
+            }
+        ]
+    });
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
@@ -707,13 +763,15 @@ async fn test_dag_replay() {
     let history_file = temp_dir.path().join("replay_history.jsonl");
     let cache = Arc::new(Cache::new(Some(history_file), 10_000));
 
-    let json_config = json!([
-        {
-            "id": "adder_1",
-            "component_type": "Adder",
-            "config": { "value": 5 },
-            "depends_on": [],
-            "inputs": 42
+    let json_config = json!({
+        "alias": "replay_test",
+        "nodes": [
+            {
+                "id": "adder_1",
+                "component_type": "Adder",
+                "config": { "value": 5 },
+                "depends_on": [],
+                "inputs": 42
         },
         {
             "id": "adder_2",
@@ -721,7 +779,8 @@ async fn test_dag_replay() {
             "config": { "value": 10 },
             "depends_on": ["adder_1"]
         }
-    ]);
+        ]
+    });
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
@@ -755,27 +814,30 @@ async fn test_dag_replay() {
 
 #[tokio::test]
 async fn test_dag_identical_components() {
-    let json_config = json!([
-        {
-            "id": "first_adder",
-            "component_type": "Adder",
-            "config": { "value": 5 },
-            "depends_on": [],
-            "inputs": 10
-        },
-        {
-            "id": "second_adder",
-            "component_type": "Adder",
-            "config": { "value": 5 },  // Same configuration as first_adder
-            "depends_on": ["first_adder"]
-        },
-        {
-            "id": "third_adder",
-            "component_type": "Adder",
-            "config": { "value": 5 },  // Same configuration as others
-            "depends_on": ["second_adder"]
-        }
-    ]);
+    let json_config = json!({
+        "alias": "identical_components_test",
+        "nodes": [
+            {
+                "id": "first_adder",
+                "component_type": "Adder",
+                "config": { "value": 5 },
+                "depends_on": [],
+                "inputs": 10
+            },
+            {
+                "id": "second_adder",
+                "component_type": "Adder",
+                "config": { "value": 5 },  // Same configuration as first_adder
+                "depends_on": ["first_adder"]
+            },
+            {
+                "id": "third_adder",
+                "component_type": "Adder",
+                "config": { "value": 5 },  // Same configuration as others
+                "depends_on": ["second_adder"]
+            }
+        ]
+    });
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");

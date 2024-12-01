@@ -1,4 +1,11 @@
-[
+{
+  "alias": "onnx_inference",
+  "metadata": {
+    "description": "Pipeline that processes features through an ONNX model",
+    "version": "1.0",
+    "tags": ["ml", "inference", "onnx"]
+  },
+  "nodes": [
     {
       "id": "sample_data",
       "component_type": "PayloadTransformer",
@@ -61,3 +68,4 @@
       "depends_on": ["ml_prediction"]
     }
   ]
+}

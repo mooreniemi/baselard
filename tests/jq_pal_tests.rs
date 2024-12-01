@@ -13,24 +13,27 @@ fn setup_test_registry() -> Registry {
 #[tokio::test]
 async fn test_basic_transformation() {
     let registry = setup_test_registry();
-    let json_config = json!([{
-        "id": "transform1",
-        "component_type": "PayloadTransformer",
-        "config": {
+    let json_config = json!({
+        "alias": "basic_transformation_test",
+        "nodes": [{
+            "id": "transform1",
+            "component_type": "PayloadTransformer",
+            "config": {
             "transformation_expression": ".message",
             "validation_data": {
                 "input": {
-                    "message": "test message",
-                    "extra": "ignored"
-                },
-                "expected_output": "test message"
+                        "message": "test message",
+                        "extra": "ignored"
+                    },
+                    "expected_output": "test message"
+                }
+            },
+            "inputs": {
+                "message": "Hello, World!",
+                "extra": "ignored"
             }
-        },
-        "inputs": {
-            "message": "Hello, World!",
-            "extra": "ignored"
-        }
-    }]);
+        }]
+    });
 
     let dag = DAGIR::from_json(&json_config)
         .and_then(|ir| DAG::from_ir(&ir, &registry, DAGConfig::default(), None))
@@ -46,18 +49,21 @@ async fn test_basic_transformation() {
 #[tokio::test]
 async fn test_invalid_jq_expression() {
     let registry = setup_test_registry();
-    let json_config = json!([{
-        "id": "transform1",
-        "component_type": "PayloadTransformer",
-        "config": {
-            "transformation_expression": "invalid[expression",
-            "validation_data": {
-                "input": {"test": "data"},
-                "expected_output": "data"
-            }
-        },
-        "inputs": {"test": "data"}
-    }]);
+    let json_config = json!({
+        "alias": "invalid_jq_expression_test",
+        "nodes": [{
+            "id": "transform1",
+            "component_type": "PayloadTransformer",
+            "config": {
+                "transformation_expression": "invalid[expression",
+                "validation_data": {
+                    "input": {"test": "data"},
+                    "expected_output": "data"
+                }
+            },
+            "inputs": {"test": "data"}
+        }]
+    });
 
     let result = DAGIR::from_json(&json_config)
         .and_then(|ir| DAG::from_ir(&ir, &registry, DAGConfig::default(), None));
@@ -78,8 +84,9 @@ async fn test_invalid_jq_expression() {
 #[tokio::test]
 async fn test_chained_transformations() {
     let registry = setup_test_registry();
-    let json_config = json!([
-        {
+    let json_config = json!({
+        "alias": "chained_transformations_test",
+        "nodes": [{
             "id": "transform1",
             "component_type": "PayloadTransformer",
             "config": {
@@ -113,8 +120,8 @@ async fn test_chained_transformations() {
                 }
             },
             "depends_on": ["transform1"]
-        }
-    ]);
+        }]
+    });
 
     let dag = DAGIR::from_json(&json_config)
         .and_then(|ir| DAG::from_ir(&ir, &registry, DAGConfig::default(), None))
@@ -136,18 +143,21 @@ async fn test_chained_transformations() {
 #[tokio::test]
 async fn test_non_json_input() {
     let registry = setup_test_registry();
-    let json_config = json!([{
-        "id": "transform1",
-        "component_type": "PayloadTransformer",
-        "config": {
-            "transformation_expression": ".",
-            "validation_data": {
+    let json_config = json!({
+        "alias": "non_json_input_test",
+        "nodes": [{
+            "id": "transform1",
+            "component_type": "PayloadTransformer",
+            "config": {
+                "transformation_expression": ".",
+                "validation_data": {
                 "input": 42,
                 "expected_output": 42
-            }
-        },
-        "inputs": 42  // Integer instead of JSON
-    }]);
+                }
+            },
+            "inputs": 42  // Integer instead of JSON
+        }]
+    });
 
     let result = DAGIR::from_json(&json_config)
         .and_then(|ir| DAG::from_ir(&ir, &registry, DAGConfig::default(), None));
@@ -165,17 +175,20 @@ async fn test_non_json_input() {
 #[tokio::test]
 async fn test_default_identity_transform() {
     let registry = setup_test_registry();
-    let json_config = json!([{
-        "id": "transform1",
-        "component_type": "PayloadTransformer",
-        "config": {
+    let json_config = json!({
+        "alias": "default_identity_transform_test",
+        "nodes": [{
+            "id": "transform1",
+            "component_type": "PayloadTransformer",
+            "config": {
             "validation_data": {
                 "input": {"test": "data"},
                 "expected_output": {"test": "data"}
             }
         },  // No expression provided, should default to "."
-        "inputs": {"test": "data"}
-    }]);
+            "inputs": {"test": "data"}
+        }]
+    });
 
     let dag = DAGIR::from_json(&json_config)
         .and_then(|ir| DAG::from_ir(&ir, &registry, DAGConfig::default(), None))

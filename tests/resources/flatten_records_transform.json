@@ -1,4 +1,11 @@
-[
+{
+  "alias": "flatten_records",
+  "metadata": {
+    "description": "Pipeline that flattens nested records and filters by score",
+    "version": "1.0",
+    "tags": ["flatten", "records", "filtering"]
+  },
+  "nodes": [
     {
       "id": "flatten_records",
       "component_type": "PayloadTransformer",
@@ -117,3 +124,4 @@
       }
     }
   ]
+}

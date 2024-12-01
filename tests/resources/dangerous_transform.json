@@ -1,9 +1,14 @@
-[
-    {
-        "id": "infinite_recursion",
-        "component_type": "PayloadTransformer",
-        "config": {
-            "transformation_expression": "
+{
+    "alias": "infinite_recursion",
+    "metadata": {
+        "description": "jq program that triggers infinite recursion"
+    },
+    "nodes": [
+        {
+            "id": "infinite_recursion",
+            "component_type": "PayloadTransformer",
+            "config": {
+                "transformation_expression": "
                 def infinite_recurse:
                     . | infinite_recurse;
 
@@ -23,6 +28,7 @@
         },
         "inputs": {
             "test": "trigger infinite recursion"
+            }
         }
-    }
-]
+    ]
+}

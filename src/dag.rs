@@ -68,7 +68,8 @@ pub(crate) struct Edge {
     pub(crate) target: NodeID,
 }
 impl DAGIR {
-    /// Creates a new DAGIR from a JSON configuration
+    /// Creates a new DAGIR from a JSON configuration, which contains a
+    /// `nodes` array, an `alias` string, and an optional `metadata` object.
     ///
     /// # Errors
     ///
@@ -86,11 +87,26 @@ impl DAGIR {
         let mut nodes = SortedVec::new();
         let mut edges: BTreeMap<NodeID, Vec<Edge>> = BTreeMap::new();
 
-        let array = json_config
-            .as_array()
-            .ok_or_else(|| "Root JSON must be an array".to_string())?;
+        let obj = json_config
+            .as_object()
+            .ok_or_else(|| "Root JSON must be an object".to_string())?;
 
-        for node in array {
+        let alias = obj
+            .get("alias")
+            .ok_or_else(|| "Config must contain an 'alias' key".to_string())?;
+        println!("Loading DAG with alias: {alias}");
+
+        if let Some(metadata) = obj.get("metadata") {
+            println!("Loading DAG with metadata: {metadata}");
+        }
+
+        let nodes_array = obj
+            .get("nodes")
+            .ok_or_else(|| "Config must contain a 'nodes' key".to_string())?
+            .as_array()
+            .ok_or_else(|| "'nodes' must be an array".to_string())?;
+
+        for node in nodes_array {
             let id = node
                 .get("id")
                 .and_then(|v| v.as_str())
