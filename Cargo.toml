@@ -39,6 +39,8 @@ spin_sleep = "1"
 ort = "1.16"
 # this version is required by the onnx crate
 ndarray = "0.15"
+parking_lot = { version = "0.12", features = ["deadlock_detection"] }
+
 
 [lib]
 name = "baselard"

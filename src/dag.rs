@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::RwLock;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::watch;
@@ -153,8 +153,8 @@ impl Default for DAGSettings {
     }
 }
 
-pub type Notifiers = Arc<Mutex<HashMap<NodeID, watch::Sender<()>>>>;
-pub type SharedResults = Arc<Mutex<IndexMap<NodeID, Data>>>;
+pub type Notifiers = Arc<RwLock<HashMap<NodeID, watch::Sender<()>>>>;
+pub type SharedResults = Arc<RwLock<IndexMap<NodeID, Data>>>;
 
 pub struct DAG {
     nodes: Arc<HashMap<NodeID, Arc<dyn Component>>>,
@@ -437,8 +437,8 @@ impl DAG {
             self.initial_inputs.len()
         );
 
-        let notifiers = Arc::new(Mutex::new(HashMap::new()));
-        let shared_results = Arc::new(Mutex::new(results));
+        let notifiers = Arc::new(RwLock::new(HashMap::new()));
+        let shared_results = Arc::new(RwLock::new(results));
 
         (notifiers, shared_results)
     }
@@ -460,7 +460,7 @@ impl DAG {
         let setup_start = Instant::now();
         for node_id in &sorted_nodes {
             let (tx, _) = watch::channel(());
-            notifiers.lock().unwrap().insert(node_id.clone(), tx);
+            notifiers.write().unwrap().insert(node_id.clone(), tx);
         }
         println!(
             "[{:.3}s] Notification channels setup took {:.3}s",
@@ -533,7 +533,7 @@ impl DAG {
             }
         }
 
-        let final_results = (*shared_results.lock().unwrap()).clone();
+        let final_results = (*shared_results.read().unwrap()).clone();
         println!(
             "[{:.3}s] All tasks completed successfully",
             start_time.elapsed().as_secs_f32(),
@@ -605,7 +605,7 @@ impl DAG {
         let mut receivers = HashMap::new();
         if let Some(edges) = edges.get(node_id) {
             for edge in edges {
-                if let Some(sender) = notifiers.lock().unwrap().get(&edge.source) {
+                if let Some(sender) = notifiers.read().unwrap().get(&edge.source) {
                     receivers.insert(edge.source.clone(), sender.subscribe());
                 }
             }
@@ -644,7 +644,7 @@ impl DAG {
             edges.get(node_id).map_or(0, Vec::len)
         );
         if let Some(edges) = edges.get(node_id) {
-            let results = shared_results.lock().unwrap();
+            let results = shared_results.read().unwrap();
             for edge in edges {
                 if !results.contains_key(&edge.source) {
                     return Err(DAGError::MissingDependency {
@@ -676,7 +676,7 @@ impl DAG {
         task::spawn_blocking(move || {
             let input_data = {
                 let prep_start = Instant::now();
-                let results_guard = shared_results.lock().unwrap();
+                let results_guard = shared_results.read().unwrap();
                 let result = Self::prepare_input_data(
                     &node_id,
                     edges.get(&node_id).map_or(&[], Vec::as_slice),
@@ -751,7 +751,7 @@ impl DAG {
     ) {
         let (id, output) = result;
         let store_start = Instant::now();
-        shared_results.lock().unwrap().insert(id.clone(), output);
+        shared_results.write().unwrap().insert(id.clone(), output);
         println!(
             "[{:.3}s] Node {} result storage took {:.3}s",
             start_time.elapsed().as_secs_f32(),
@@ -760,7 +760,7 @@ impl DAG {
         );
 
         let notify_start = Instant::now();
-        if let Some(sender) = notifiers.lock().unwrap().get(&id) {
+        if let Some(sender) = notifiers.read().unwrap().get(&id) {
             println!(
                 "[{:.3}s] Notifying dependents of node {} completion",
                 start_time.elapsed().as_secs_f32(),
@@ -953,3 +953,6 @@ impl NodeExecutionContext {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

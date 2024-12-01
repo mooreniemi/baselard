@@ -23,7 +23,8 @@ use baselard::{
 };
 use serde_json::{json, Value};
 use serde::Deserialize;
-use std::sync::Arc;
+use core::time::Duration;
+use std::{sync::Arc, thread};
 use std::time::Instant;
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -299,6 +300,20 @@ async fn execute_by_alias(
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 async fn main() {
+    thread::spawn(move || loop {
+        let deadlocks = parking_lot::deadlock::check_deadlock();
+        if !deadlocks.is_empty() {
+            eprintln!("{} deadlock(s) detected!", deadlocks.len());
+            for (i, threads) in deadlocks.iter().enumerate() {
+                eprintln!("Deadlock #{i} involves the following threads:");
+                for thread in threads {
+                    eprintln!(" - Thread ID: {:?}", thread.thread_id());
+                }
+            }
+        }
+        thread::sleep(Duration::from_secs(1));
+    });
+
     let mut registry = Registry::new();
     registry.register::<Adder>("Adder");
     registry.register::<Multiplier>("Multiplier");
