@@ -11,6 +11,15 @@ use moka::sync::Cache as MokaCache;
 
 pub(crate) type RequestPosition = u64;
 
+const MAX_POSITION_CACHE_SIZE: u64 = 10_000;
+
+/// Replay a DAG from a history file. This essentially pre-populates the
+/// inputs to your DAG. You can then filter to the specific nodes you want.
+///
+/// Instead of caching the history output itself, this demo Component caches
+/// the positions of the lines in the file so that the next seek is instant.
+///
+/// This Component is not optimized for read performance.
 pub struct Replay {
     reader: Mutex<BufReader<File>>,
     position_cache: MokaCache<RequestId, RequestPosition>,
@@ -27,7 +36,7 @@ impl Component for Replay {
             Error::ConfigurationError(format!("Failed to open history file: {e}"))
         })?;
         let reader = Mutex::new(BufReader::new(file));
-        let position_cache = MokaCache::new(10_000);
+        let position_cache = MokaCache::new(MAX_POSITION_CACHE_SIZE);
 
         Ok(Self { reader, position_cache })
     }
