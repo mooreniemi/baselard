@@ -5,6 +5,7 @@ use std::{
     hash::{Hash, Hasher},
     sync::Arc,
 };
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -240,6 +241,7 @@ type RegisteredComponentFactory = Arc<dyn Fn(Value) -> Result<Arc<dyn Component>
 pub struct Registry {
     unconfigured_component_factories: HashMap<ComponentType, RegisteredComponentFactory>,
     configured_component_cache: Arc<RwLock<HashMap<ComponentKey, Arc<dyn Component>>>>,
+    configured_count: AtomicUsize,
 }
 
 impl Default for Registry {
@@ -254,6 +256,7 @@ impl Registry {
         Self {
             unconfigured_component_factories: HashMap::new(),
             configured_component_cache: Arc::new(RwLock::new(HashMap::new())),
+            configured_count: AtomicUsize::new(0),
         }
     }
 
@@ -301,6 +304,7 @@ impl Registry {
 
         if let Ok(mut cache) = self.configured_component_cache.write() {
             cache.insert(key, Arc::clone(&component));
+            self.configured_count.fetch_add(1, Ordering::Relaxed);
             Ok(component)
         } else {
             Err(Error::CacheError("Failed to acquire write lock".to_string()))
@@ -329,7 +333,10 @@ impl std::fmt::Debug for Registry {
                 "unconfigured_component_factories",
                 &self.unconfigured_component_factories.keys().collect::<Vec<_>>(),
             )
-            .field("configured_component_cache", &"<locked>")
+            .field(
+                "configured_component_cache",
+                &self.configured_count.load(Ordering::Relaxed),
+            )
             .finish_non_exhaustive()
     }
 }
