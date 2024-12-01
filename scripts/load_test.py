@@ -64,6 +64,7 @@ async def load_test(
     requests_per_user,
     exclude_dangerous=True,
     exclude_remote=True,
+    exclude_replay=True,
     enable_cache=True,
 ):
     """Run load test with specified number of concurrent users and requests."""
@@ -89,6 +90,11 @@ async def load_test(
         # Skip remote tests if excluded
         if exclude_remote and "remote" in file_path:
             print(f"Skipping remote test file: {os.path.basename(file_path)}")
+            continue
+
+        # Skip replay tests if excluded
+        if exclude_replay and "replay" in file_path:
+            print(f"Skipping replay test file: {os.path.basename(file_path)}")
             continue
 
         try:
@@ -238,6 +244,11 @@ def main():
         action="store_true",
         help="Include tests requiring remote services",
     )
+    parser.add_argument(
+        "--allow-replay",
+        action="store_true",
+        help="Include replay tests",
+    )
 
     args = parser.parse_args()
 
@@ -247,6 +258,7 @@ def main():
             requests_per_user=args.requests,
             exclude_dangerous=not args.allow_dangerous,
             exclude_remote=not args.allow_remote,
+            exclude_replay=not args.allow_replay,
             enable_cache=not args.disable_cache,
         )
     )
