@@ -9,6 +9,7 @@ import os
 from datetime import datetime
 from statistics import mean, median
 import argparse
+import sys
 
 
 async def send_request(
@@ -250,8 +251,17 @@ def main():
         action="store_true",
         help="Include replay tests",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        help="Random seed for test file selection (default: random)",
+    )
 
     args = parser.parse_args()
+
+    seed = args.seed if args.seed is not None else random.randrange(sys.maxsize)
+    print(f"\nUsing random seed: {seed}")
+    random.seed(seed)
 
     asyncio.run(
         load_test(

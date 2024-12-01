@@ -329,10 +329,7 @@ impl std::fmt::Debug for Registry {
                 "unconfigured_component_factories",
                 &self.unconfigured_component_factories.keys().collect::<Vec<_>>(),
             )
-            .field(
-                "configured_component_cache",
-                &self.configured_component_cache.read().unwrap().len(),
-            )
+            .field("configured_component_cache", &"<locked>")
             .finish_non_exhaustive()
     }
 }
