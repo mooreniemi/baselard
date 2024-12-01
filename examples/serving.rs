@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Json, State},
+    extract::{Json, State, Query},
     response::{IntoResponse, Response},
     routing::post,
     Router,
@@ -23,6 +23,7 @@ use baselard::{
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Instant;
+use std::collections::HashMap;
 
 #[derive(Debug)]
 struct Multiplier {
@@ -95,10 +96,58 @@ struct AppState {
     cache: Arc<Cache>,
 }
 
+/// Convenience endpoint to view the DAG in a tree format, incidentally validates
+async fn view_dag(
+    State(_state): State<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(dag_config_json): Json<Value>,
+) -> impl IntoResponse {
+    let view_type = params.get("mode")
+        .map_or(TreeView::Dependency, |v| match v.to_lowercase().as_str() {
+            "execution" => TreeView::Execution,
+            _ => TreeView::Dependency,
+        });
+
+    let ir = match DAGIR::from_json(&dag_config_json) {
+        Ok(ir) => ir,
+        Err(e) => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                format!("Invalid DAG configuration: {e}"),
+            )
+                .into_response()
+        }
+    };
+
+    let tree = ir.build_tree(view_type);
+    let mut output = String::new();
+
+    if let Err(e) = ascii_tree::write_tree(&mut output, &tree) {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to generate tree visualization: {e}"),
+        )
+            .into_response();
+    }
+
+    match Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header("Content-Type", "text/plain; charset=utf-8")
+        .body(output)
+    {
+        Ok(response) => response.into_response(),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to construct response: {e}"),
+        )
+            .into_response(),
+    }
+}
+
 async fn execute_dag(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
-    Json(dag_config): Json<Value>,
+    Json(dag_config_json): Json<Value>,
 ) -> Response {
     let start = Instant::now();
 
@@ -107,7 +156,7 @@ async fn execute_dag(
         .and_then(|h| h.to_str().ok())
         .is_some_and(|s| s.to_lowercase().contains("no-cache"));
 
-    let result = match DAGIR::from_json(&dag_config) {
+    let result = match DAGIR::from_json(&dag_config_json) {
         Ok(ir) => {
             let start = Instant::now();
             let tree = ir.build_tree(TreeView::Dependency);
@@ -180,6 +229,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/execute", post(execute_dag))
+        .route("/view", post(view_dag))
         .with_state(state);
 
     println!("Server running on http://localhost:3000");
