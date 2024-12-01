@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use ascii_tree::Tree;
 
-use crate::dag::DAGIR;
+use crate::dagir::DAGIR;
+
 
 #[derive(Debug, Clone, Copy)]
 pub enum TreeView {

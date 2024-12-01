@@ -2,6 +2,7 @@ pub mod cache;
 pub mod component;
 pub mod dag;
 pub mod dag_visualizer;
+pub mod dagir;
 
 pub mod components {
     pub mod adder;

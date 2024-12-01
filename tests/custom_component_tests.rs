@@ -2,7 +2,8 @@ use baselard::cache::Cache;
 use baselard::component::Registry;
 use baselard::component::{Component, Data, DataType, Error};
 use baselard::components::adder::Adder;
-use baselard::dag::{DAGConfig, DAGError, DAG, DAGIR, NodeExecutionContext};
+use baselard::dag::{DAGSettings, DAGError, DAG, NodeExecutionContext};
+use baselard::dagir::DAGIR;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -77,7 +78,7 @@ async fn test_basic_multiplication() {
     });
 
     let dag = DAGIR::from_json(&json_config)
-        .and_then(|ir| DAG::from_ir(&ir, &registry, DAGConfig::default(), None))
+        .and_then(|ir| DAG::from_ir(&ir, &registry, DAGSettings::default(), None))
         .expect("Valid DAG");
 
     let results = dag.execute(None).await.expect("Execution success");
@@ -112,7 +113,7 @@ async fn test_chained_operations() {
     });
 
     let dag = DAGIR::from_json(&json_config)
-        .and_then(|ir| DAG::from_ir(&ir, &registry, DAGConfig::default(), None))
+        .and_then(|ir| DAG::from_ir(&ir, &registry, DAGSettings::default(), None))
         .expect("Valid DAG");
 
     let results = dag.execute(None).await.expect("Execution success");
@@ -139,7 +140,7 @@ async fn test_error_handling_config() {
     });
 
     let result = DAGIR::from_json(&invalid_config)
-        .and_then(|ir| DAG::from_ir(&ir, &registry, DAGConfig::default(), None));
+        .and_then(|ir| DAG::from_ir(&ir, &registry, DAGSettings::default(), None));
 
     assert!(matches!(
         result,
@@ -161,7 +162,7 @@ async fn test_error_handling_input() {
     });
 
     let result = DAGIR::from_json(&invalid_input)
-        .and_then(|ir| DAG::from_ir(&ir, &registry, DAGConfig::default(), None));
+        .and_then(|ir| DAG::from_ir(&ir, &registry, DAGSettings::default(), None));
     assert!(result.is_err(), "Invalid input should return an error");
 }
 
@@ -187,7 +188,7 @@ async fn test_caching_and_replay() {
             DAG::from_ir(
                 &ir,
                 &registry,
-                DAGConfig::default(),
+                DAGSettings::default(),
                 Some(Arc::clone(&cache)),
             )
         })
@@ -221,7 +222,7 @@ async fn test_default_input() {
     });
 
     let dag = DAGIR::from_json(&json_config)
-        .and_then(|ir| DAG::from_ir(&ir, &registry, DAGConfig::default(), None))
+        .and_then(|ir| DAG::from_ir(&ir, &registry, DAGSettings::default(), None))
         .expect("Valid DAG");
 
     let results = dag.execute(None).await.expect("Execution success");

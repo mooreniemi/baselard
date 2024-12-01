@@ -18,7 +18,8 @@ use baselard::{
 use baselard::{
     component::{Component, Data, DataType, Error, Registry},
     components::{adder::Adder, payload_transformer::PayloadTransformer},
-    dag::{DAGConfig, DAGError, NodeExecutionContext, DAG, DAGIR},
+    dag::{DAGSettings, DAGError, NodeExecutionContext, DAG},
+    dagir::DAGIR,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -166,7 +167,7 @@ async fn execute_dag(
             let _ = ascii_tree::write_tree(&mut output, &tree);
             println!("{output}");
 
-            let mut dag_config = DAGConfig::default();
+            let mut dag_config = DAGSettings::default();
             if !use_cache {
                 println!("Disabling memory cache");
                 dag_config.enable_memory_cache = false;

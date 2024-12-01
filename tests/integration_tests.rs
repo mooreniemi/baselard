@@ -3,7 +3,8 @@ use baselard::component::Data;
 use baselard::component::Registry;
 use baselard::components::*;
 use baselard::dag::DAGError;
-use baselard::dag::{DAGConfig, DAG, DAGIR};
+use baselard::dag::{DAGSettings, DAG};
+use baselard::dagir::DAGIR;
 use indexmap::IndexMap;
 use serde_json::json;
 use std::sync::Arc;
@@ -67,7 +68,7 @@ async fn test_optimal_makespan() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
-    let dag_config = DAGConfig::cache_off();
+    let dag_config = DAGSettings::cache_off();
 
     let start = std::time::Instant::now();
     let dag = DAG::from_ir(&dag_ir, &registry, dag_config, None).expect("Valid DAG");
@@ -127,7 +128,7 @@ async fn test_optimal_failspan() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
-    let dag_config = DAGConfig::cache_off();
+    let dag_config = DAGSettings::cache_off();
 
     let start = std::time::Instant::now();
     let dag = DAG::from_ir(&dag_ir, &registry, dag_config, None).expect("Valid DAG");
@@ -165,7 +166,7 @@ async fn test_simple_seq_adds_up() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
-    let dag_config = DAGConfig::cache_off();
+    let dag_config = DAGSettings::cache_off();
     let dag = DAG::from_ir(&dag_ir, &registry, dag_config, None).expect("Valid DAG");
     let results = dag.execute(None).await.expect("Execution success");
     assert_eq!(results.len(), 2);
@@ -248,7 +249,7 @@ async fn test_complex_dag_execution() {
     let registry = setup_registry();
 
     let dag_ir = DAGIR::from_json(&json_config).expect("Failed to parse valid JSON config");
-    let dag_config = DAGConfig::cache_off();
+    let dag_config = DAGSettings::cache_off();
 
     let mut expected_outputs: IndexMap<String, Data> = IndexMap::new();
     expected_outputs.insert(
@@ -338,7 +339,7 @@ async fn test_dag_execution_with_errors() {
     let registry = setup_registry();
 
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
-    let dag_config = DAGConfig::cache_off();
+    let dag_config = DAGSettings::cache_off();
 
     match DAG::from_ir(&dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
@@ -355,7 +356,7 @@ async fn test_dag_execution_with_errors() {
 
 #[tokio::test]
 async fn test_dag_execution_with_timeout() {
-    let dag_config = DAGConfig::cache_off();
+    let dag_config = DAGSettings::cache_off();
     let timeout_ms = dag_config.per_node_timeout_ms;
 
     let json_config = json!({
@@ -429,7 +430,7 @@ async fn test_dag_cycle_detection() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
-    let dag_config = DAGConfig::cache_off();
+    let dag_config = DAGSettings::cache_off();
 
     match DAG::from_ir(&dag_ir, &registry, dag_config, None) {
         Ok(dag) => match dag.execute(None).await {
@@ -458,7 +459,7 @@ async fn test_dag_empty_graph() {
     });
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
-    let dag_config = DAGConfig::cache_off();
+    let dag_config = DAGSettings::cache_off();
 
     match DAG::from_ir(&dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
@@ -489,7 +490,7 @@ async fn test_dag_invalid_component_type() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
-    let dag_config = DAGConfig::cache_off();
+    let dag_config = DAGSettings::cache_off();
 
     assert!(
         DAG::from_ir(&dag_ir, &registry, dag_config, None).is_err(),
@@ -514,7 +515,7 @@ async fn test_dag_invalid_dependency() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
-    let dag_config = DAGConfig::cache_off();
+    let dag_config = DAGSettings::cache_off();
 
     assert!(
         DAG::from_ir(&dag_ir, &registry, dag_config, None).is_err(),
@@ -545,7 +546,7 @@ async fn test_dag_duplicate_node_ids() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
-    let dag_config = DAGConfig::cache_off();
+    let dag_config = DAGSettings::cache_off();
 
     assert!(
         DAG::from_ir(&dag_ir, &registry, dag_config, None).is_err(),
@@ -629,7 +630,7 @@ async fn test_dag_large_parallel_execution() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
-    let dag_config = DAGConfig::cache_off();
+    let dag_config = DAGSettings::cache_off();
 
     match DAG::from_ir(&dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
@@ -677,7 +678,7 @@ async fn test_dag_cleanup_on_failure() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
-    let dag_config = DAGConfig::cache_off();
+    let dag_config = DAGSettings::cache_off();
 
     match DAG::from_ir(&dag_ir, &registry, dag_config, None) {
         Ok(dag) => {
@@ -718,7 +719,7 @@ async fn test_dag_with_caching() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
-    let dag_config = DAGConfig::default();
+    let dag_config = DAGSettings::default();
 
     let dag =
         DAG::from_ir(&dag_ir, &registry, dag_config, Some(Arc::clone(&cache))).expect("Valid DAG");
@@ -784,7 +785,7 @@ async fn test_dag_replay() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
-    let dag_config = DAGConfig::default(); // This enables history
+    let dag_config = DAGSettings::default(); // This enables history
 
     let dag =
         DAG::from_ir(&dag_ir, &registry, dag_config, Some(Arc::clone(&cache))).expect("Valid DAG");
@@ -841,7 +842,7 @@ async fn test_dag_identical_components() {
 
     let registry = setup_registry();
     let dag_ir = DAGIR::from_json(&json_config).expect("Valid config");
-    let dag_config = DAGConfig::cache_off();
+    let dag_config = DAGSettings::cache_off();
     let dag = DAG::from_ir(&dag_ir, &registry, dag_config, None).expect("Valid DAG");
 
     let results = dag.execute(None).await.expect("Execution success");

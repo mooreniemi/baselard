@@ -2,13 +2,9 @@ use futures::StreamExt;
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
-use sorted_vec::SortedVec;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -22,213 +18,12 @@ use crate::cache::Cache;
 use crate::cache::DAGResult;
 use crate::component::Registry;
 use crate::component::{Component, Data, DataType};
+use crate::dagir::Edge;
+use crate::dagir::DAGIR;
 
 pub type RequestId = String;
 
 pub(crate) type NodeID = String;
-
-#[derive(Debug, Clone)]
-pub(crate) struct NodeIR {
-    pub(crate) id: NodeID,
-    pub(crate) namespace: Option<String>,
-    pub(crate) component_type: String,
-    pub(crate) config: Value,
-    pub(crate) inputs: Option<Data>,
-}
-
-impl Eq for NodeIR {}
-
-impl PartialEq for NodeIR {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-impl PartialOrd for NodeIR {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for NodeIR {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.id.cmp(&other.id)
-    }
-}
-
-#[derive(Debug)]
-pub struct DAGIR {
-    pub(crate) alias: String,
-    pub(crate) nodes: SortedVec<NodeIR>,
-    pub(crate) edges: BTreeMap<NodeID, Vec<Edge>>,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub(crate) struct Edge {
-    pub(crate) source: NodeID,
-    pub(crate) target: NodeID,
-}
-impl DAGIR {
-    /// Creates a new DAGIR from a JSON configuration, which contains a
-    /// `nodes` array, an `alias` string, and an optional `metadata` object.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The root JSON is not an array
-    /// - Any node is missing required fields (`id`, `component_type`, `config`)
-    /// - Any node ID is empty
-    /// - Any input data is of an unsupported type
-    ///
-    /// # Panics
-    ///
-    /// Panics if integer conversion fails when processing numeric inputs
-    // FIXME: break up and refactor this function
-    #[allow(clippy::too_many_lines)]
-    pub fn from_json(json_config: &Value) -> Result<Self, String> {
-        let start = Instant::now();
-        let mut nodes = SortedVec::new();
-        let mut edges: BTreeMap<NodeID, Vec<Edge>> = BTreeMap::new();
-
-        let obj = json_config
-            .as_object()
-            .ok_or_else(|| "Root JSON must be an object".to_string())?;
-
-        let alias = obj
-            .get("alias")
-            .ok_or_else(|| "Config must contain an 'alias' key".to_string())?;
-        println!("Loading DAG with alias: {alias}");
-
-        if let Some(metadata) = obj.get("metadata") {
-            println!("Loading DAG with metadata: {metadata}");
-        }
-
-        let nodes_array = obj
-            .get("nodes")
-            .ok_or_else(|| "Config must contain a 'nodes' key".to_string())?
-            .as_array()
-            .ok_or_else(|| "'nodes' must be an array".to_string())?;
-
-        for node in nodes_array {
-            let id = node
-                .get("id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| "Node ID must be a string".to_string())?
-                .to_string();
-
-            if id.is_empty() {
-                return Err("Node ID cannot be empty".to_string());
-            }
-
-            let component_type = node
-                .get("component_type")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| format!("Node {id} missing component_type"))?
-                .to_string();
-
-            let config = node
-                .get("config")
-                .ok_or_else(|| format!("Node {id} missing config"))?
-                .clone();
-
-            let namespace = node
-                .get("namespace")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-
-            let inputs = node
-                .get("inputs")
-                .map(|v| match v {
-                    Value::String(s) => Ok(Data::Text(s.clone())),
-                    Value::Number(n) => n
-                        .as_i64()
-                        .map(|i| Data::Integer(i32::try_from(i).unwrap()))
-                        .ok_or_else(|| "Unsupported number type in inputs".to_string()),
-                    Value::Array(arr) => {
-                        let data_list = arr
-                            .iter()
-                            .map(|item| match item {
-                                Value::String(s) => Ok(Data::Text(s.clone())),
-                                Value::Number(n) => n
-                                    .as_i64()
-                                    .map(|i| Data::Integer(i32::try_from(i).unwrap()))
-                                    .ok_or_else(|| {
-                                        "Unsupported number type in array input".to_string()
-                                    }),
-                                _ => Err("Unsupported type in array input".to_string()),
-                            })
-                            .collect::<Result<Vec<_>, String>>()?;
-                        Ok(Data::List(data_list))
-                    }
-                    Value::Object(_) => Ok(Data::Json(v.clone())),
-                    _ => Err("Unsupported input type".to_string()),
-                })
-                .transpose()?;
-
-            nodes.push(NodeIR {
-                id: id.clone(),
-                namespace,
-                component_type,
-                config,
-                inputs,
-            });
-
-            if let Some(depends_on) = node.get("depends_on") {
-                let deps = depends_on
-                    .as_array()
-                    .ok_or_else(|| format!("Node {id} depends_on must be an array"))?;
-
-                let mut node_edges = Vec::new();
-                for dep in deps {
-                    let source = dep
-                        .as_str()
-                        .ok_or_else(|| format!("Node {id} dependency must be a string"))?
-                        .to_string();
-
-                    node_edges.push(Edge {
-                        source,
-                        target: id.clone(),
-                    });
-                }
-                if !node_edges.is_empty() {
-                    edges.insert(id.clone(), node_edges);
-                }
-            }
-        }
-
-        let duration = start.elapsed();
-        println!("DAGIR ({alias}) from_json took {duration:?}");
-        Ok(DAGIR {
-            alias: alias.to_string(),
-            nodes,
-            edges,
-        })
-    }
-
-    #[must_use]
-    pub fn calculate_hash(&self) -> u64 {
-        let mut hasher = DefaultHasher::new();
-
-        for node in self.nodes.iter() {
-            node.id.hash(&mut hasher);
-            node.namespace.hash(&mut hasher);
-            node.component_type.hash(&mut hasher);
-            node.config.to_string().hash(&mut hasher);
-            node.inputs.hash(&mut hasher);
-        }
-
-        for (target, edges) in &self.edges {
-            target.hash(&mut hasher);
-            let mut sorted_edges = edges.clone();
-            sorted_edges.sort_by(|a, b| a.source.cmp(&b.source));
-            for edge in sorted_edges {
-                edge.hash(&mut hasher);
-            }
-        }
-
-        hasher.finish()
-    }
-}
 
 #[derive(Debug)]
 pub enum DAGError {
@@ -316,13 +111,13 @@ impl std::fmt::Display for DAGError {
 impl std::error::Error for DAGError {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DAGConfig {
+pub struct DAGSettings {
     pub per_node_timeout_ms: Option<u64>,
     pub enable_memory_cache: bool,
     pub enable_history: bool,
 }
 
-impl DAGConfig {
+impl DAGSettings {
     #[must_use]
     pub fn enable_memory_cache(&self) -> bool {
         self.enable_memory_cache
@@ -348,9 +143,9 @@ impl DAGConfig {
     }
 }
 
-impl Default for DAGConfig {
+impl Default for DAGSettings {
     fn default() -> Self {
-        DAGConfig {
+        DAGSettings {
             per_node_timeout_ms: Some(200),
             enable_memory_cache: true,
             enable_history: true,
@@ -365,7 +160,7 @@ pub struct DAG {
     nodes: Arc<HashMap<NodeID, Arc<dyn Component>>>,
     edges: Arc<HashMap<NodeID, Vec<Edge>>>,
     initial_inputs: Arc<HashMap<NodeID, Data>>,
-    config: DAGConfig,
+    settings: DAGSettings,
     cache: Option<Arc<Cache>>,
     ir_hash: u64,
     alias: String,
@@ -375,7 +170,7 @@ impl std::fmt::Debug for DAG {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DAG")
             .field("alias", &self.alias)
-            .field("dag_config", &self.config)
+            .field("dag_settings", &self.settings)
             .field("nodes", &self.nodes.keys().collect::<Vec<_>>())
             .field("edge_count", &self.edges.len())
             .field("initial_inputs", &self.initial_inputs)
@@ -398,11 +193,11 @@ impl DAG {
     pub fn from_ir(
         ir: &DAGIR,
         registry: &Registry,
-        config: DAGConfig,
+        settings: DAGSettings,
         cache: Option<Arc<Cache>>,
     ) -> Result<Self, String> {
         let start = Instant::now();
-        println!("DAGConfig: {config:?}");
+        println!("DAGSettings: {settings:?}");
 
         let hash_start = Instant::now();
         let ir_hash = ir.calculate_hash();
@@ -466,7 +261,11 @@ impl DAG {
             }
 
             nodes.insert(node.id.clone(), component);
-            println!("Node {} setup took {:?}", node.id, component_start.elapsed());
+            println!(
+                "Node {} setup took {:?}",
+                node.id,
+                component_start.elapsed()
+            );
         }
         println!("Total component creation took {:?}", comp_start.elapsed());
 
@@ -474,7 +273,7 @@ impl DAG {
             nodes: Arc::new(nodes),
             edges: Arc::new(edges),
             initial_inputs: Arc::new(initial_inputs),
-            config,
+            settings,
             cache,
             ir_hash,
             alias: ir.alias.clone(),
@@ -525,7 +324,7 @@ impl DAG {
             request_id
         );
 
-        if self.config.enable_memory_cache() {
+        if self.settings.enable_memory_cache() {
             if let Some(cache) = &self.cache {
                 if let Some(cached_result) =
                     cache.get_cached_result(self.ir_hash, &self.initial_inputs)
@@ -699,10 +498,13 @@ impl DAG {
                 match handle.await {
                     Ok(Ok(())) => Ok(()),
                     Ok(Err(e)) => Err((id_for_future, e)),
-                    Err(e) => Err((id_for_future.clone(), DAGError::ExecutionError {
-                        node_id: id_for_future,
-                        reason: format!("Task join error: {e}"),
-                    })),
+                    Err(e) => Err((
+                        id_for_future.clone(),
+                        DAGError::ExecutionError {
+                            node_id: id_for_future,
+                            reason: format!("Task join error: {e}"),
+                        },
+                    )),
                 }
             });
             abort_handles.push(id);
@@ -757,7 +559,7 @@ impl DAG {
         let nodes = Arc::clone(&self.nodes);
         let edges = Arc::clone(&self.edges);
         let initial_inputs = Arc::clone(&self.initial_inputs);
-        let timeout_ms = self.config.per_node_timeout_ms();
+        let timeout_ms = self.settings.per_node_timeout_ms();
 
         tokio::spawn(async move {
             println!(
@@ -772,7 +574,8 @@ impl DAG {
                     start_time,
                     &shared_results,
                     &edges,
-                ).await?;
+                )
+                .await?;
             }
 
             let execution = Self::prepare_node_execution(
@@ -785,14 +588,10 @@ impl DAG {
                 start_time,
             );
 
-            let result = Self::execute_with_timeout(execution, timeout_ms, &node_id, start_time).await?;
+            let result =
+                Self::execute_with_timeout(execution, timeout_ms, &node_id, start_time).await?;
 
-            Self::handle_execution_result(
-                result,
-                &shared_results,
-                &notifiers,
-                start_time,
-            );
+            Self::handle_execution_result(result, &shared_results, &notifiers, start_time);
 
             Ok(())
         })
@@ -930,7 +729,7 @@ impl DAG {
                         node_id: node_id.to_string(),
                         reason: format!("Task join error: {e}"),
                     })?
-                },
+                }
                 Err(_) => Err(DAGError::ExecutionError {
                     node_id: node_id.to_string(),
                     reason: format!("Node execution timed out after {ms}ms"),
@@ -1059,7 +858,7 @@ impl DAG {
     /// - Cache is not configured
     /// - No historical result found for the given request ID
     pub async fn replay(&self, request_id: &str) -> Result<IndexMap<String, Data>, DAGError> {
-        if !self.config.enable_history {
+        if !self.settings.enable_history {
             return Err(DAGError::InvalidConfiguration(
                 "History replay is disabled".to_string(),
             ));
@@ -1082,7 +881,7 @@ impl DAG {
 
     #[must_use]
     pub fn get_cached_result(&self) -> Option<DAGResult> {
-        if !self.config.enable_memory_cache {
+        if !self.settings.enable_memory_cache {
             println!("Memory cache is disabled");
             return None;
         }
@@ -1093,7 +892,7 @@ impl DAG {
 
     #[must_use]
     pub fn get_result_by_request_id(&self, request_id: &str) -> Option<DAGResult> {
-        if !self.config.enable_memory_cache {
+        if !self.settings.enable_memory_cache {
             return None;
         }
         self.cache
@@ -1103,7 +902,7 @@ impl DAG {
 
     #[must_use]
     pub fn get_cached_node_result(&self, node_id: &str) -> Option<Data> {
-        if !self.config.enable_memory_cache {
+        if !self.settings.enable_memory_cache {
             return None;
         }
         if let Some(cache) = &self.cache {
@@ -1114,7 +913,7 @@ impl DAG {
     }
 
     pub async fn get_historical_result(&self, request_id: &str) -> Option<DAGResult> {
-        if !self.config.enable_history {
+        if !self.settings.enable_history {
             return None;
         }
         if let Some(cache) = &self.cache {
