@@ -5,6 +5,7 @@ use sorted_vec::SortedVec;
 use std::collections::BTreeMap;
 use std::hash::Hash;
 use std::hash::Hasher;
+use serde::Deserialize;
 
 use crate::{component::Data, dag::NodeID};
 
@@ -49,6 +50,28 @@ pub(crate) struct Edge {
     pub(crate) source: NodeID,
     pub(crate) target: NodeID,
 }
+
+#[derive(Debug, Deserialize, Clone)]
+struct DAGConfig {
+    alias: String,
+    #[serde(default)]
+    metadata: Option<Value>,
+    nodes: Vec<NodeConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct NodeConfig {
+    id: String,
+    component_type: String,
+    config: Value,
+    #[serde(default)]
+    namespace: Option<String>,
+    #[serde(default)]
+    inputs: Option<Value>,
+    #[serde(default)]
+    depends_on: Vec<String>,
+}
+
 impl DAGIR {
     /// Creates a new DAGIR from a JSON configuration, which contains a
     /// `nodes` array, an `alias` string, and an optional `metadata` object.
@@ -56,134 +79,88 @@ impl DAGIR {
     /// # Errors
     ///
     /// Returns an error if:
-    /// - The root JSON is not an array
+    /// - The root JSON is not an object
+    /// - The `alias` field is empty
     /// - Any node is missing required fields (`id`, `component_type`, `config`)
-    /// - Any node ID is empty
-    /// - Any input data is of an unsupported type
-    ///
-    /// # Panics
-    ///
-    /// Panics if integer conversion fails when processing numeric inputs
-    // FIXME: break up and refactor this function
-    #[allow(clippy::too_many_lines)]
     pub fn from_json(json_config: &Value) -> Result<Self, String> {
         let start = Instant::now();
-        let mut nodes = SortedVec::new();
-        let mut edges: BTreeMap<NodeID, Vec<Edge>> = BTreeMap::new();
 
-        let obj = json_config
-            .as_object()
-            .ok_or_else(|| "Root JSON must be an object".to_string())?;
+        let config: DAGConfig = serde_json::from_value(json_config.clone())
+            .map_err(|e| format!("Invalid DAG configuration: {e}"))?;
 
-        let alias = obj
-            .get("alias")
-            .ok_or_else(|| "Config must contain an 'alias' key".to_string())?;
-        println!("Loading DAG with alias: {alias}");
+        let result = Self::from_config(config.clone());
 
-        if let Some(metadata) = obj.get("metadata") {
-            println!("Loading DAG with metadata: {metadata}");
+        let duration = start.elapsed();
+        println!("DAGIR ({}, {:?}) from_json took {duration:?}", config.alias, config.metadata);
+
+        result
+    }
+
+    fn from_config(config: DAGConfig) -> Result<Self, String> {
+        if config.alias.is_empty() {
+            return Err("Alias cannot be empty".to_string());
         }
 
-        let nodes_array = obj
-            .get("nodes")
-            .ok_or_else(|| "Config must contain a 'nodes' key".to_string())?
-            .as_array()
-            .ok_or_else(|| "'nodes' must be an array".to_string())?;
+        let mut nodes = SortedVec::new();
+        let mut edges = BTreeMap::new();
 
-        for node in nodes_array {
-            let id = node
-                .get("id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| "Node ID must be a string".to_string())?
-                .to_string();
-
-            if id.is_empty() {
+        for node in config.nodes {
+            if node.id.is_empty() {
                 return Err("Node ID cannot be empty".to_string());
             }
 
-            let component_type = node
-                .get("component_type")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| format!("Node {id} missing component_type"))?
-                .to_string();
-
-            let config = node
-                .get("config")
-                .ok_or_else(|| format!("Node {id} missing config"))?
-                .clone();
-
-            let namespace = node
-                .get("namespace")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-
-            let inputs = node
-                .get("inputs")
-                .map(|v| match v {
-                    Value::String(s) => Ok(Data::Text(s.clone())),
-                    Value::Number(n) => n
-                        .as_i64()
-                        .map(|i| Data::Integer(i32::try_from(i).unwrap()))
-                        .ok_or_else(|| "Unsupported number type in inputs".to_string()),
-                    Value::Array(arr) => {
-                        let data_list = arr
-                            .iter()
-                            .map(|item| match item {
-                                Value::String(s) => Ok(Data::Text(s.clone())),
-                                Value::Number(n) => n
-                                    .as_i64()
-                                    .map(|i| Data::Integer(i32::try_from(i).unwrap()))
-                                    .ok_or_else(|| {
-                                        "Unsupported number type in array input".to_string()
-                                    }),
-                                _ => Err("Unsupported type in array input".to_string()),
-                            })
-                            .collect::<Result<Vec<_>, String>>()?;
-                        Ok(Data::List(data_list))
-                    }
-                    Value::Object(_) => Ok(Data::Json(v.clone())),
-                    _ => Err("Unsupported input type".to_string()),
-                })
-                .transpose()?;
+            let inputs = match node.inputs {
+                Some(input_value) => Some(Self::parse_input_value(&input_value)?),
+                _ => None,
+            };
 
             nodes.push(NodeIR {
-                id: id.clone(),
-                namespace,
-                component_type,
-                config,
+                id: node.id.clone(),
+                namespace: node.namespace,
+                component_type: node.component_type,
+                config: node.config,
                 inputs,
             });
 
-            if let Some(depends_on) = node.get("depends_on") {
-                let deps = depends_on
-                    .as_array()
-                    .ok_or_else(|| format!("Node {id} depends_on must be an array"))?;
-
-                let mut node_edges = Vec::new();
-                for dep in deps {
-                    let source = dep
-                        .as_str()
-                        .ok_or_else(|| format!("Node {id} dependency must be a string"))?
-                        .to_string();
-
-                    node_edges.push(Edge {
+            if !node.depends_on.is_empty() {
+                let node_edges = node.depends_on.into_iter()
+                    .map(|source| Edge {
                         source,
-                        target: id.clone(),
-                    });
-                }
-                if !node_edges.is_empty() {
-                    edges.insert(id.clone(), node_edges);
-                }
+                        target: node.id.clone(),
+                    })
+                    .collect();
+                edges.insert(node.id, node_edges);
             }
         }
 
-        let duration = start.elapsed();
-        println!("DAGIR ({alias}) from_json took {duration:?}");
         Ok(DAGIR {
-            alias: alias.to_string(),
+            alias: config.alias,
             nodes,
             edges,
         })
+    }
+
+    fn parse_input_value(value: &Value) -> Result<Data, String> {
+        match value {
+            Value::String(s) => Ok(Data::Text(s.clone())),
+            Value::Number(n) => n.as_i64()
+                .map(|i| Data::Integer(i32::try_from(i).unwrap()))
+                .ok_or_else(|| "Unsupported number type in inputs".to_string()),
+            Value::Array(arr) => {
+                let data_list = arr.iter()
+                    .map(|item| match item {
+                        Value::String(s) => Ok(Data::Text(s.clone())),
+                        Value::Number(n) => n.as_i64()
+                            .map(|i| Data::Integer(i32::try_from(i).unwrap()))
+                            .ok_or_else(|| "Unsupported number type in array input".to_string()),
+                        _ => Err("Unsupported type in array input".to_string()),
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                Ok(Data::List(data_list))
+            },
+            Value::Object(_) => Ok(Data::Json(value.clone())),
+            _ => Err("Unsupported input type".to_string()),
+        }
     }
 
     #[must_use]
