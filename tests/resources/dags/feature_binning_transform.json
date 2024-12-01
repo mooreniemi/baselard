@@ -2,7 +2,7 @@
   "alias": "feature_binning",
   "metadata": {
     "description": "Pipeline that bins numerical features into predefined ranges",
-    "version": "1.0",
+    "version": "1.0.0",
     "tags": ["binning", "features", "preprocessing"]
   },
   "nodes": [

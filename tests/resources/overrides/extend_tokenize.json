@@ -1,0 +1,29 @@
+{
+    "overrides": {
+        "alias": "count_tokens",
+        "nodes": [
+            {
+                "id": "count_tokens",
+                "component_type": "PayloadTransformer",
+                "depends_on": [
+                    "tokenize_text"
+                ],
+                "config": {
+                    "transformation_expression": "{ token_count: .tokens | length }",
+                    "validation_data": {
+                        "input": {
+                            "tokens": [
+                                "hello",
+                                "world",
+                                "test"
+                            ]
+                        },
+                        "expected_output": {
+                            "token_count": 3
+                        }
+                    }
+                }
+            }
+        ]
+    }
+}

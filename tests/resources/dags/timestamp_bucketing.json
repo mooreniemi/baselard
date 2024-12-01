@@ -2,7 +2,7 @@
   "alias": "timestamp_bucketing",
   "metadata": {
     "description": "Pipeline that buckets timestamps into today, last week, and last year periods",
-    "version": "1.0",
+    "version": "1.0.0",
     "tags": ["time", "bucketing", "filtering"]
   },
   "nodes": [

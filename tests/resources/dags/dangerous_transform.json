@@ -1,7 +1,8 @@
 {
     "alias": "infinite_recursion",
     "metadata": {
-        "description": "jq program that triggers infinite recursion"
+        "description": "jq program that triggers infinite recursion",
+        "version": "1.0.0"
     },
     "nodes": [
         {

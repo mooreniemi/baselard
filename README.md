@@ -27,13 +27,15 @@ Baselard is a library for building and executing directed acyclic graphs (DAGs) 
 - [x] ONNX model execution
 - [x] Remote model execution (just a simple example for now)
 - [ ] Streaming will not be supported: it doesn't match the scheduling mechanism
+- [x] Override node configuration in a DAG
+- [x] Merge DAGs
 
 To try a complex transform (if you have `cargo run --example serving` running),
 
 ```shell
 curl -s -X POST http://localhost:3000/execute \
   -H "Content-Type: application/json" \
-  -d @tests/resources/complex_transform.json
+  -d @tests/resources/dags/complex_transform.json
 ```
 
 You can also turn the cache off by adding `"cache": "no-cache"` to the request.
@@ -42,7 +44,7 @@ You can also turn the cache off by adding `"cache": "no-cache"` to the request.
 curl -s -X POST http://localhost:3000/execute \
   -H "Cache-Control: no-cache" \
   -H "Content-Type: application/json" \
-  -d @tests/resources/timestamp_bucketing.json
+  -d @tests/resources/dags/timestamp_bucketing.json
 ```
 
 ### JQ Setup

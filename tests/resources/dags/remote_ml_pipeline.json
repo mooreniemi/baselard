@@ -1,9 +1,9 @@
 {
-  "alias": "onnx_inference",
+  "alias": "remote_ml_inference",
   "metadata": {
-    "description": "Pipeline that processes features through an ONNX model",
-    "version": "1.0",
-    "tags": ["ml", "inference", "onnx"]
+    "description": "Pipeline that processes features through a remote ML model endpoint",
+    "version": "1.0.0",
+    "tags": ["ml", "inference", "remote"]
   },
   "nodes": [
     {
@@ -18,7 +18,6 @@
           }
         }
       },
-      "depends_on": [],
       "inputs": {
         "data": {
           "features": [1.0, 2.0, 3.0, 4.0]
@@ -57,7 +56,7 @@
       "id": "ml_prediction",
       "component_type": "MLModel",
       "config": {
-        "onnx_model_path": "tests/resources/decision_tree.onnx"
+        "remote_endpoint": "http://127.0.0.1:4000/process"
       },
       "depends_on": ["json_to_data"]
     },

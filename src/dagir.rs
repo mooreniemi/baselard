@@ -55,23 +55,23 @@ pub(crate) struct Edge {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct DAGConfig {
-    alias: String,
+    pub alias: String,
     #[serde(default)]
-    metadata: Option<Value>,
-    nodes: Vec<NodeConfig>,
+    pub metadata: Option<Value>,
+    pub nodes: Vec<NodeConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct NodeConfig {
-    id: String,
-    component_type: String,
-    config: Value,
+    pub id: String,
+    pub component_type: String,
+    pub config: Value,
     #[serde(default)]
-    namespace: Option<String>,
+    pub namespace: Option<String>,
     #[serde(default)]
-    inputs: Option<Value>,
+    pub inputs: Option<Value>,
     #[serde(default)]
-    depends_on: Vec<String>,
+    pub depends_on: Vec<String>,
 }
 
 impl DAGIR {
@@ -101,7 +101,14 @@ impl DAGIR {
         result
     }
 
-    fn from_config(config: DAGConfig) -> Result<Self, String> {
+    /// Creates a new DAGIR from a `DAGConfig`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The alias is empty
+    /// - Any node is missing required fields (`id`, `component_type`, `config`)
+    pub fn from_config(config: DAGConfig) -> Result<Self, String> {
         if config.alias.is_empty() {
             return Err("Alias cannot be empty".to_string());
         }

@@ -2,7 +2,7 @@
   "alias": "multi_model_comparison",
   "metadata": {
     "description": "Pipeline that compares predictions from remote and multiple ONNX models",
-    "version": "1.0",
+    "version": "1.0.0",
     "tags": ["ml", "inference", "comparison", "remote", "onnx"]
   },
   "nodes": [
@@ -64,7 +64,7 @@
       "id": "onnx_simple",
       "component_type": "MLModel",
       "config": {
-        "onnx_model_path": "tests/resources/decision_tree.onnx"
+        "onnx_model_path": "tests/resources/models/decision_tree.onnx"
       },
       "depends_on": ["json_to_data"]
     },
@@ -72,7 +72,7 @@
       "id": "onnx_pipeline",
       "component_type": "MLModel",
       "config": {
-        "onnx_model_path": "tests/resources/decision_tree_with_pipeline.onnx"
+        "onnx_model_path": "tests/resources/models/decision_tree_with_pipeline.onnx"
       },
       "depends_on": ["json_to_data"]
     },

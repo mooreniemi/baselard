@@ -2,7 +2,7 @@
   "alias": "historical_replay",
   "metadata": {
     "description": "Pipeline that replays and processes historical analysis results",
-    "version": "1.0",
+    "version": "1.0.0",
     "tags": ["replay", "historical"]
   },
   "nodes": [

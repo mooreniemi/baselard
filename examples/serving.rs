@@ -1,11 +1,11 @@
 use axum::{
-    extract::{Json, State, Query},
+    extract::{Json, Path, Query, State},
     response::{IntoResponse, Response},
     routing::post,
     Router,
 };
 
-use baselard::dag_visualizer::TreeView;
+use baselard::{dag_visualizer::TreeView, dagir::DAGConfig};
 use baselard::{
     cache::Cache,
     components::{
@@ -22,9 +22,11 @@ use baselard::{
     dagir::DAGIR,
 };
 use serde_json::{json, Value};
+use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Instant;
 use std::collections::HashMap;
+use std::sync::RwLock;
 
 #[derive(Debug)]
 struct Multiplier {
@@ -95,6 +97,12 @@ impl Component for Multiplier {
 struct AppState {
     registry: Arc<Registry>,
     cache: Arc<Cache>,
+    dag_configs: Arc<RwLock<HashMap<String, DAGConfig>>>,
+}
+
+#[derive(Deserialize)]
+struct AliasExecuteRequest {
+    overrides: Option<DAGConfig>,
 }
 
 /// Convenience endpoint to view the DAG in a tree format, incidentally validates
@@ -148,7 +156,7 @@ async fn view_dag(
 async fn execute_dag(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
-    Json(dag_config_json): Json<Value>,
+    Json(config): Json<DAGConfig>,
 ) -> Response {
     let start = Instant::now();
 
@@ -157,19 +165,97 @@ async fn execute_dag(
         .and_then(|h| h.to_str().ok())
         .is_some_and(|s| s.to_lowercase().contains("no-cache"));
 
-    let result = match DAGIR::from_json(&dag_config_json) {
-        Ok(ir) => {
-            let start = Instant::now();
-            let tree = ir.build_tree(TreeView::Dependency);
-            let elapsed = start.elapsed().as_millis();
-            println!("DAG tree built in {elapsed}ms");
-            let mut output = String::new();
-            let _ = ascii_tree::write_tree(&mut output, &tree);
-            println!("{output}");
+    {
+        let mut configs = state.dag_configs.write().unwrap();
+        configs.insert(config.alias.clone(), config.clone());
+    }
 
+    let result = match DAGIR::from_config(config) {
+        Ok(ir) => {
             let mut dag_config = DAGSettings::default();
             if !use_cache {
-                println!("Disabling memory cache");
+                dag_config.enable_memory_cache = false;
+            }
+
+            match DAG::from_ir(&ir, &state.registry, dag_config, Some(Arc::clone(&state.cache))) {
+                Ok(dag) => dag.execute(None).await,
+                Err(e) => Err(DAGError::InvalidConfiguration(e.to_string())),
+            }
+        }
+        Err(e) => Err(DAGError::InvalidConfiguration(e)),
+    };
+
+    let elapsed = start.elapsed().as_millis();
+    println!("DAG execution took {elapsed}ms");
+
+    match result {
+        Ok(outputs) => Json(json!({
+            "success": true,
+            "results": outputs,
+            "took_ms": elapsed,
+            "cache_enabled": !headers
+                .get(axum::http::header::CACHE_CONTROL)
+                .and_then(|h| h.to_str().ok())
+                .is_some_and(|s| s.to_lowercase().contains("no-cache"))
+        }))
+        .into_response(),
+        Err(err) => Json(json!({
+            "success": false,
+            "error": format!("{:?}", err),
+            "took_ms": elapsed,
+            "cache_enabled": !headers
+                .get(axum::http::header::CACHE_CONTROL)
+                .and_then(|h| h.to_str().ok())
+                .is_some_and(|s| s.to_lowercase().contains("no-cache"))
+        }))
+        .into_response(),
+    }
+}
+
+async fn execute_by_alias(
+    State(state): State<Arc<AppState>>,
+    Path(alias): Path<String>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<AliasExecuteRequest>,
+) -> Response {
+    let start = Instant::now();
+
+    let base_config = {
+        let configs = state.dag_configs.read().unwrap();
+        match configs.get(&alias) {
+            Some(config) => config.clone(),
+            _ => {
+                return (
+                    axum::http::StatusCode::NOT_FOUND,
+                    format!("No DAG configuration found for alias: {alias}"),
+                ).into_response();
+            }
+        }
+    };
+
+    let config = if let Some(overrides) = request.overrides {
+        match base_config.merge(&overrides) {
+            Ok(merged) => merged,
+            Err(e) => {
+                return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    format!("Failed to merge override configuration: {e}"),
+                ).into_response();
+            }
+        }
+    } else {
+        base_config
+    };
+
+    let use_cache = !headers
+        .get(axum::http::header::CACHE_CONTROL)
+        .and_then(|h| h.to_str().ok())
+        .is_some_and(|s| s.to_lowercase().contains("no-cache"));
+
+    let result = match DAGIR::from_config(config.clone()) {
+        Ok(ir) => {
+            let mut dag_config = DAGSettings::default();
+            if !use_cache {
                 dag_config.enable_memory_cache = false;
             }
 
@@ -187,21 +273,25 @@ async fn execute_dag(
     };
 
     let elapsed = start.elapsed().as_millis();
-    println!("DAG execution took {elapsed}ms");
+    let config_alias = config.alias.clone();
 
     match result {
         Ok(outputs) => Json(json!({
             "success": true,
             "results": outputs,
             "took_ms": elapsed,
-            "cache_enabled": use_cache
+            "cache_enabled": use_cache,
+            "base_alias": alias,
+            "config_alias": config_alias
         }))
         .into_response(),
         Err(err) => Json(json!({
             "success": false,
             "error": format!("{:?}", err),
             "took_ms": elapsed,
-            "cache_enabled": use_cache
+            "cache_enabled": use_cache,
+            "base_alias": alias,
+            "config_alias": config_alias
         }))
         .into_response(),
     }
@@ -226,10 +316,12 @@ async fn main() {
     let state = Arc::new(AppState {
         registry: Arc::new(registry),
         cache: Arc::new(cache),
+        dag_configs: Arc::new(RwLock::new(HashMap::new())),
     });
 
     let app = Router::new()
         .route("/execute", post(execute_dag))
+        .route("/execute/:alias", post(execute_by_alias))
         .route("/view", post(view_dag))
         .with_state(state);
 

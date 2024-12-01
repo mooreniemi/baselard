@@ -2,7 +2,7 @@
   "alias": "price_analysis_pipeline",
   "metadata": {
     "description": "Pipeline that processes and analyzes item prices, combining statistical analysis with message length calculations",
-    "version": "1.0",
+    "version": "1.0.0",
     "tags": ["analysis", "pricing", "statistics"]
   },
   "nodes": [

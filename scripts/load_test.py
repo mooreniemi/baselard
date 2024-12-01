@@ -71,7 +71,8 @@ async def load_test(
     # Load all JSON files from tests/resources
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     json_files = glob.glob(
-        os.path.join(base_dir, "tests", "resources", "**", "*.json"), recursive=True
+        os.path.join(base_dir, "tests", "resources", "dags", "**", "*.json"),
+        recursive=True,
     )
 
     if not json_files:

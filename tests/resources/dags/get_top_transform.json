@@ -2,7 +2,7 @@
   "alias": "get_top_numbers",
   "metadata": {
     "description": "Pipeline that analyzes a list of numbers and returns statistics including top N values",
-    "version": "1.0",
+    "version": "1.0.0",
     "tags": ["statistics", "sorting", "analysis"]
   },
   "nodes": [

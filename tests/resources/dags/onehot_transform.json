@@ -2,7 +2,7 @@
   "alias": "one_hot_encoding",
   "metadata": {
     "description": "Pipeline that performs one-hot encoding on categorical values",
-    "version": "1.0",
+    "version": "1.0.0",
     "tags": ["encoding", "categorical", "preprocessing"]
   },
   "nodes": [
