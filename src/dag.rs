@@ -377,7 +377,6 @@ impl DAG {
         let start = Instant::now();
         println!("DAGConfig: {config:?}");
 
-        // Time hash calculation
         let hash_start = Instant::now();
         let ir_hash = ir.calculate_hash();
         println!("Hash calculation took {:?}", hash_start.elapsed());
@@ -387,7 +386,6 @@ impl DAG {
         let mut initial_inputs = HashMap::new();
         let mut node_ids = HashSet::new();
 
-        // Time duplicate ID check
         let dup_start = Instant::now();
         println!("Checking for duplicate node IDs");
         for node in ir.nodes.iter() {
@@ -400,7 +398,6 @@ impl DAG {
         println!("Registry: {registry:?}");
         println!("Creating components");
 
-        // Time component creation and validation
         let comp_start = Instant::now();
         for node in ir.nodes.iter() {
             println!("Starting component creation for node {}", node.id);
@@ -621,7 +618,7 @@ impl DAG {
 
     async fn execute_nodes(
         &self,
-        sorted_nodes: Vec<String>,
+        sorted_nodes: Vec<NodeID>,
         notifiers: Notifiers,
         shared_results: SharedResults,
         start_time: Instant,
@@ -848,7 +845,7 @@ impl DAG {
         initial_inputs: Arc<HashMap<NodeID, Data>>,
         shared_results: SharedResults,
         start_time: Instant,
-    ) -> task::JoinHandle<Result<(String, Data), DAGError>> {
+    ) -> task::JoinHandle<Result<(NodeID, Data), DAGError>> {
         task::spawn_blocking(move || {
             let input_data = {
                 let prep_start = Instant::now();
@@ -885,18 +882,18 @@ impl DAG {
     }
 
     async fn execute_with_timeout(
-        execution: task::JoinHandle<Result<(String, Data), DAGError>>,
+        execution: task::JoinHandle<Result<(NodeID, Data), DAGError>>,
         timeout_ms: Option<u64>,
         node_id: &NodeID,
         start_time: Instant,
-    ) -> Result<(String, Data), DAGError> {
+    ) -> Result<(NodeID, Data), DAGError> {
         let execution_start = Instant::now();
 
         if let Some(ms) = timeout_ms {
             match timeout(Duration::from_millis(ms), execution).await {
                 Ok(result) => {
                     println!(
-                        "[{:.3}s] Node {} execution took {:.3}s",
+                        "[{:.3}s] Node {} execution took {:.3}s (was within timeout)",
                         start_time.elapsed().as_secs_f32(),
                         node_id,
                         execution_start.elapsed().as_secs_f32()
@@ -920,7 +917,7 @@ impl DAG {
     }
 
     fn handle_execution_result(
-        result: (String, Data),
+        result: (NodeID, Data),
         shared_results: &SharedResults,
         notifiers: &Notifiers,
         start_time: Instant,
