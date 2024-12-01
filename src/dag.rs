@@ -58,6 +58,7 @@ impl Ord for NodeIR {
 
 #[derive(Debug)]
 pub struct DAGIR {
+    pub(crate) alias: String,
     pub(crate) nodes: SortedVec<NodeIR>,
     pub(crate) edges: BTreeMap<NodeID, Vec<Edge>>,
 }
@@ -82,6 +83,8 @@ impl DAGIR {
     /// # Panics
     ///
     /// Panics if integer conversion fails when processing numeric inputs
+    // FIXME: break up and refactor this function
+    #[allow(clippy::too_many_lines)]
     pub fn from_json(json_config: &Value) -> Result<Self, String> {
         let start = Instant::now();
         let mut nodes = SortedVec::new();
@@ -194,8 +197,12 @@ impl DAGIR {
         }
 
         let duration = start.elapsed();
-        println!("DAGIR from_json took {duration:?}");
-        Ok(DAGIR { nodes, edges })
+        println!("DAGIR ({alias}) from_json took {duration:?}");
+        Ok(DAGIR {
+            alias: alias.to_string(),
+            nodes,
+            edges,
+        })
     }
 
     #[must_use]
@@ -361,11 +368,13 @@ pub struct DAG {
     config: DAGConfig,
     cache: Option<Arc<Cache>>,
     ir_hash: u64,
+    alias: String,
 }
 
 impl std::fmt::Debug for DAG {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DAG")
+            .field("alias", &self.alias)
             .field("dag_config", &self.config)
             .field("nodes", &self.nodes.keys().collect::<Vec<_>>())
             .field("edge_count", &self.edges.len())
@@ -468,6 +477,7 @@ impl DAG {
             config,
             cache,
             ir_hash,
+            alias: ir.alias.clone(),
         };
 
         println!("Total DAG setup took {:?}", start.elapsed());
