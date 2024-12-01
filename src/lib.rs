@@ -13,4 +13,5 @@ pub mod components {
     pub mod string_length_counter;
     pub mod wildcard_processor;
     pub mod ml_model;
+    pub mod replay;
 }

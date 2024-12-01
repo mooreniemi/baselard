@@ -23,7 +23,9 @@ use crate::cache::DAGResult;
 use crate::component::Registry;
 use crate::component::{Component, Data, DataType};
 
-type NodeID = String;
+pub type RequestId = String;
+
+pub(crate) type NodeID = String;
 
 #[derive(Debug, Clone)]
 pub(crate) struct NodeIR {
@@ -1014,7 +1016,7 @@ impl DAG {
         let ir_hash = self.ir_hash;
 
         tokio::spawn(async move {
-            cache.store_result(ir_hash, &inputs, results_copy, Some(request_id));
+            cache.store_result(ir_hash, &inputs, &results_copy, &request_id);
             println!(
                 "[{elapsed_secs:.3}s] Cache storage spawned, setup took {:.3}s",
                 cache_start.elapsed().as_secs_f32()

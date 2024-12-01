@@ -5,13 +5,20 @@ use axum::{
     Router,
 };
 
-use baselard::{cache::Cache, components::{crash_test_dummy::CrashTestDummy, data_to_json_processor::DataToJsonProcessor, json_combiner::JsonCombiner, json_to_data_processor::JsonToDataProcessor, ml_model::MLModel, string_length_counter::StringLengthCounter}};
 use baselard::dag_visualizer::TreeView;
+use baselard::{
+    cache::Cache,
+    components::{
+        crash_test_dummy::CrashTestDummy, data_to_json_processor::DataToJsonProcessor,
+        json_combiner::JsonCombiner, json_to_data_processor::JsonToDataProcessor,
+        ml_model::MLModel, string_length_counter::StringLengthCounter, replay::Replay,
+    },
+};
 
 use baselard::{
     component::{Component, Data, DataType, Error, Registry},
     components::{adder::Adder, payload_transformer::PayloadTransformer},
-    dag::{DAGConfig, DAGError, DAG, DAGIR, NodeExecutionContext},
+    dag::{DAGConfig, DAGError, NodeExecutionContext, DAG, DAGIR},
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -39,7 +46,10 @@ impl Component for Multiplier {
                 .map(f64::from)
                 .sum(),
             Data::Json(value) => {
-                println!("Multiplier {}: received JSON value: {value:?}", context.node_id);
+                println!(
+                    "Multiplier {}: received JSON value: {value:?}",
+                    context.node_id
+                );
                 #[allow(clippy::cast_precision_loss)]
                 if let Some(num) = value.as_i64() {
                     num as f64
@@ -159,6 +169,7 @@ async fn main() {
     registry.register::<JsonToDataProcessor>("JsonToDataProcessor");
     registry.register::<JsonCombiner>("JsonCombiner");
     registry.register::<MLModel>("MLModel");
+    registry.register::<Replay>("Replay");
 
     let cache = Cache::new(Some("/tmp/axum_dag_history.jsonl"), 10_000);
 

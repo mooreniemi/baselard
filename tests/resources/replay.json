@@ -1,0 +1,67 @@
+[
+  {
+    "id": "fetch_previous_results",
+    "component_type": "Replay",
+    "config": {
+      "history_path": "/tmp/axum_dag_history.jsonl"
+    },
+    "inputs": {
+      "request_id": "3bf117cd-9eac-4aae-b98a-6351251849cd",
+      "target_nodes": ["analyze_prices", "format_results"]
+    }
+  },
+  {
+    "id": "process_historical_data",
+    "component_type": "PayloadTransformer",
+    "config": {
+      "transformation_expression": "{ historical_analysis: { price_analysis: .analyze_prices, formatted_output: .format_results, summary: (\"Retrieved historical price analysis from \" + .timestamp) } }",
+      "validation_data": {
+        "input": {
+          "analyze_prices": {
+            "average": 159.99,
+            "maximum": 299.99,
+            "minimum": 49.99,
+            "top_3": [299.99, 199.99, 149.99]
+          },
+          "format_results": {
+            "price_stats": {
+              "average": 159.99,
+              "maximum": 299.99,
+              "minimum": 49.99,
+              "top_3": [299.99, 199.99, 149.99]
+            },
+            "metadata": {
+              "record_count": 3,
+              "average_formatted": "159.99 USD"
+            }
+          },
+          "timestamp": "2024-12-01T02:46:31.597289Z"
+        },
+        "expected_output": {
+          "historical_analysis": {
+            "price_analysis": {
+              "average": 159.99,
+              "maximum": 299.99,
+              "minimum": 49.99,
+              "top_3": [299.99, 199.99, 149.99]
+            },
+            "formatted_output": {
+              "price_stats": {
+                "average": 159.99,
+                "maximum": 299.99,
+                "minimum": 49.99,
+                "top_3": [299.99, 199.99, 149.99]
+              },
+              "metadata": {
+                "record_count": 3,
+                "average_formatted": "159.99 USD"
+              }
+            },
+            "summary": "Retrieved historical price analysis from 2024-12-01T02:46:31.597289Z"
+          }
+        }
+      }
+    },
+    "depends_on": ["fetch_previous_results"]
+  }
+]

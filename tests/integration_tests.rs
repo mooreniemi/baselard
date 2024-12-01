@@ -697,8 +697,8 @@ async fn test_dag_with_caching() {
         serde_json::from_str(&file_contents).expect("File should contain valid JSON");
 
     assert_eq!(parsed["request_id"], "test-run-1");
-    assert_eq!(parsed["node_results"]["adder_1"]["Integer"], 47);
-    assert_eq!(parsed["node_results"]["adder_2"]["Integer"], 57);
+    assert_eq!(parsed["node_results"]["adder_1"]["integer"], 47);
+    assert_eq!(parsed["node_results"]["adder_2"]["integer"], 57);
 }
 
 #[tokio::test]

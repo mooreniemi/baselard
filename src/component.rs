@@ -6,14 +6,15 @@ use std::{
     sync::Arc,
 };
 
-use serde::{de::VariantAccess, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::dag::DAGError;
 use crate::dag::NodeExecutionContext;
 
 /// Runtime values that flow through the DAG
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Data {
     Null,
     Integer(i32),
@@ -66,70 +67,6 @@ impl PartialEq for Data {
             (Data::Json(a), Data::Json(b)) => a == b,
             _ => false,
         }
-    }
-}
-
-impl Serialize for Data {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Data::Null => serializer.serialize_unit_variant("Data", 0, "Null"),
-            Data::Integer(i) => serializer.serialize_newtype_variant("Data", 1, "Integer", i),
-            Data::Float(f) => serializer.serialize_newtype_variant("Data", 2, "Float", f),
-            Data::Text(s) => serializer.serialize_newtype_variant("Data", 2, "Text", s),
-            Data::List(list) => serializer.serialize_newtype_variant("Data", 3, "List", list),
-            Data::Json(value) => serializer.serialize_newtype_variant("Data", 4, "Json", value),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for Data {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "snake_case")]
-        enum Field {
-            Null,
-            Integer,
-            Float,
-            Text,
-            List,
-            Json,
-        }
-
-        struct DataVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for DataVisitor {
-            type Value = Data;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("an enum representing Data")
-            }
-
-            fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::EnumAccess<'de>,
-            {
-                match data.variant()? {
-                    (Field::Null, _) => Ok(Data::Null),
-                    (Field::Integer, variant) => variant.newtype_variant().map(Data::Integer),
-                    (Field::Float, variant) => variant.newtype_variant().map(Data::Float),
-                    (Field::Text, variant) => variant.newtype_variant().map(Data::Text),
-                    (Field::List, variant) => variant.newtype_variant().map(Data::List),
-                    (Field::Json, variant) => variant.newtype_variant().map(Data::Json),
-                }
-            }
-        }
-
-        deserializer.deserialize_enum(
-            "Data",
-            &["Null", "Integer", "Float", "Text", "List", "Json"],
-            DataVisitor,
-        )
     }
 }
 

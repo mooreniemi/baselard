@@ -10,12 +10,11 @@ use tokio::fs::OpenOptions;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 use crate::component::Data;
-
-type RequestId = String;
+use crate::dag::{NodeID, RequestId};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DAGResult {
-    pub request_id: Option<RequestId>,
+    pub request_id: RequestId,
     pub timestamp: chrono::DateTime<chrono::Utc>,
     pub node_results: IndexMap<String, Data>,
 }
@@ -66,37 +65,25 @@ impl Cache {
     pub fn store_result(
         &self,
         ir_hash: u64,
-        inputs: &HashMap<String, Data>,
-        results: IndexMap<String, Data>,
-        request_id: Option<RequestId>,
+        inputs: &HashMap<NodeID, Data>,
+        results: &IndexMap<NodeID, Data>,
+        request_id: &RequestId,
     ) {
         let timestamp = chrono::Utc::now();
 
-        let memory_result = DAGResult {
-            request_id: request_id.clone(),
+        let dag_result = DAGResult {
+            request_id: request_id.to_string(),
             timestamp,
             node_results: results.clone(),
         };
 
         let cache_key = Self::create_cache_key(ir_hash, inputs);
-        self.request_cache.insert(cache_key, memory_result.clone());
-
-        if let Some(request_id) = request_id.clone() {
-            self.history_cache.insert(request_id, memory_result);
-        }
+        self.request_cache.insert(cache_key, dag_result.clone());
 
         if let Some(file_path) = &self.history_file {
+            self.history_cache.insert(request_id.to_string(), dag_result.clone());
+
             let file_path = file_path.clone();
-
-            let history_request_id =
-                request_id.unwrap_or_else(|| format!("auto-{}", uuid::Uuid::new_v4()));
-
-            let history_result = DAGResult {
-                request_id: Some(history_request_id),
-                timestamp,
-                node_results: results,
-            };
-
             tokio::spawn(async move {
                 if let Ok(mut file) = OpenOptions::new()
                     .create(true)
@@ -104,7 +91,7 @@ impl Cache {
                     .open(file_path)
                     .await
                 {
-                    if let Ok(json) = serde_json::to_string(&history_result) {
+                    if let Ok(json) = serde_json::to_string(&dag_result) {
                         let _ = file.write_all(format!("{json}\n").as_bytes()).await;
                     }
                 }
@@ -143,7 +130,7 @@ impl Cache {
 
         while let Ok(Some(line)) = lines.next_line().await {
             if let Ok(result) = serde_json::from_str::<DAGResult>(&line) {
-                if result.request_id.as_deref() == Some(request_id) {
+                if result.request_id == request_id {
                     self.history_cache
                         .insert(request_id.to_string(), result.clone());
                     return Some(result);

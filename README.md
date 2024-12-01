@@ -19,6 +19,7 @@ Baselard is a library for building and executing directed acyclic graphs (DAGs) 
 - [x] Types include `Union` types to allow flexibility
 - [x] Cache results of components
 - [x] Keep a request history of components for replay
+- [x] Replay from request history by request ID
 - [x] Automatically handle parallel nodes
 - [x] Abort execution of DAG on failing nodes
 - [ ] Graceful per-node shutdown on abortion (allow for cleanup)
