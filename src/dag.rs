@@ -314,7 +314,7 @@ impl DAG {
     /// - The DAG contains cycles
     pub async fn execute(
         &self,
-        request_id: Option<String>,
+        request_id: Option<RequestId>,
     ) -> Result<IndexMap<NodeID, Data>, DAGError> {
         let start_time = Instant::now();
         let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -358,7 +358,7 @@ impl DAG {
                 cache,
                 &final_results,
                 &request_id,
-                start_time.elapsed().as_secs_f32(),
+                start_time,
             );
         }
 
@@ -449,7 +449,7 @@ impl DAG {
         notifiers: Notifiers,
         shared_results: SharedResults,
         start_time: Instant,
-        request_id: String,
+        request_id: RequestId,
     ) -> Result<IndexMap<NodeID, Data>, DAGError> {
         println!(
             "[{:.3}s] Spawning tasks for {} nodes",
@@ -545,7 +545,7 @@ impl DAG {
     fn spawn_node_task(
         &self,
         node_id: &NodeID,
-        request_id: &str,
+        request_id: &RequestId,
         notifiers: &Notifiers,
         shared_results: &SharedResults,
         start_time: Instant,
@@ -614,8 +614,8 @@ impl DAG {
     }
 
     async fn wait_for_dependencies(
-        receivers: &mut HashMap<String, watch::Receiver<()>>,
-        node_id: &str,
+        receivers: &mut HashMap<NodeID, watch::Receiver<()>>,
+        node_id: &NodeID,
         start_time: Instant,
         shared_results: &SharedResults,
         edges: &HashMap<NodeID, Vec<Edge>>,
@@ -666,7 +666,7 @@ impl DAG {
 
     fn prepare_node_execution(
         node_id: NodeID,
-        request_id: String,
+        request_id: RequestId,
         nodes: Arc<HashMap<NodeID, Arc<dyn Component>>>,
         edges: Arc<HashMap<NodeID, Vec<Edge>>>,
         initial_inputs: Arc<HashMap<NodeID, Data>>,
@@ -779,8 +779,8 @@ impl DAG {
     fn prepare_input_data(
         node_id: &NodeID,
         edges: &[Edge],
-        results: &IndexMap<String, Data>,
-        initial_inputs: &HashMap<String, Data>,
+        results: &IndexMap<NodeID, Data>,
+        initial_inputs: &HashMap<NodeID, Data>,
         expected_type: &DataType,
         start_time: Instant,
     ) -> Result<Data, DAGError> {
@@ -828,11 +828,14 @@ impl DAG {
     fn handle_caching(
         &self,
         cache: &Arc<Cache>,
-        final_results: &IndexMap<String, Data>,
-        request_id: &str,
-        elapsed_secs: f32,
+        final_results: &IndexMap<NodeID, Data>,
+        request_id: &RequestId,
+        start_time: Instant,
     ) {
-        println!("[{elapsed_secs:.3}s] Starting cache storage");
+        println!(
+            "[{:.3}s] Starting cache storage",
+            start_time.elapsed().as_secs_f32()
+        );
         let cache_start = Instant::now();
         let cache = Arc::clone(cache);
         let results_copy = final_results.clone();
@@ -843,7 +846,8 @@ impl DAG {
         tokio::spawn(async move {
             cache.store_result(ir_hash, &inputs, &results_copy, &request_id);
             println!(
-                "[{elapsed_secs:.3}s] Cache storage spawned, setup took {:.3}s",
+                "[{:.3}s] Cache storage spawned, setup took {:.3}s",
+                start_time.elapsed().as_secs_f32(),
                 cache_start.elapsed().as_secs_f32()
             );
         });
@@ -857,7 +861,7 @@ impl DAG {
     /// - History replay is disabled
     /// - Cache is not configured
     /// - No historical result found for the given request ID
-    pub async fn replay(&self, request_id: &str) -> Result<IndexMap<String, Data>, DAGError> {
+    pub async fn replay(&self, request_id: &RequestId) -> Result<IndexMap<NodeID, Data>, DAGError> {
         if !self.settings.enable_history {
             return Err(DAGError::InvalidConfiguration(
                 "History replay is disabled".to_string(),
@@ -891,7 +895,7 @@ impl DAG {
     }
 
     #[must_use]
-    pub fn get_result_by_request_id(&self, request_id: &str) -> Option<DAGResult> {
+    pub fn get_result_by_request_id(&self, request_id: &RequestId) -> Option<DAGResult> {
         if !self.settings.enable_memory_cache {
             return None;
         }
@@ -901,7 +905,7 @@ impl DAG {
     }
 
     #[must_use]
-    pub fn get_cached_node_result(&self, node_id: &str) -> Option<Data> {
+    pub fn get_cached_node_result(&self, node_id: &NodeID) -> Option<Data> {
         if !self.settings.enable_memory_cache {
             return None;
         }
@@ -912,7 +916,7 @@ impl DAG {
         }
     }
 
-    pub async fn get_historical_result(&self, request_id: &str) -> Option<DAGResult> {
+    pub async fn get_historical_result(&self, request_id: &RequestId) -> Option<DAGResult> {
         if !self.settings.enable_history {
             return None;
         }
@@ -941,12 +945,12 @@ impl DAG {
 #[derive(Debug, Clone)]
 pub struct NodeExecutionContext {
     pub node_id: NodeID,
-    pub request_id: String,
+    pub request_id: RequestId,
 }
 
 impl NodeExecutionContext {
     #[must_use]
-    pub fn new(node_id: NodeID, request_id: String) -> Self {
+    pub fn new(node_id: NodeID, request_id: RequestId) -> Self {
         Self {
             node_id,
             request_id,

@@ -740,7 +740,7 @@ async fn test_dag_with_caching() {
         .expect("Cached results exist");
     assert_eq!(results, cached_results.node_results);
 
-    let node_result = dag.get_cached_node_result("adder_1");
+    let node_result = dag.get_cached_node_result(&"adder_1".to_string());
     assert_eq!(node_result, Some(Data::Integer(47)));
 
     let file_contents = tokio::fs::read_to_string(history_file)
@@ -809,7 +809,7 @@ async fn test_dag_replay() {
     assert_eq!(replayed_results.get("adder_2"), Some(&Data::Integer(57)));
 
     // Test replay of non-existent request ID
-    let err = dag.replay("non-existent-id").await.unwrap_err();
+    let err = dag.replay(&"non-existent-id".to_string()).await.unwrap_err();
     assert!(matches!(err, DAGError::HistoricalResultNotFound { .. }));
 }
 
