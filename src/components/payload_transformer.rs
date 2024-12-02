@@ -177,7 +177,6 @@ impl PayloadTransformer {
                 stdin.write_all(validation_json.as_bytes())
             });
 
-            // Add timeout for the write operation
             let start = Instant::now();
             let timeout = Duration::from_secs_f32(VALIDATION_TIMEOUT);
 
@@ -245,7 +244,6 @@ impl PayloadTransformer {
     }
 
     fn get_process_output(child: Child, program_hash: u64) -> Result<Value, String> {
-        // Take ownership of the child process directly
         let output = child.wait_with_output()
             .map_err(|e| format!("Failed to read command output: {e}"))?;
 
@@ -289,7 +287,6 @@ impl PayloadTransformer {
 
     /// Helper function to validate that two values have the same structure
     fn validate_structure(expected: &Value, actual: &Value) -> Result<(), String> {
-        // Check that the types match, handling all JSON value types
         if actual.is_array() != expected.is_array()
             || actual.is_object() != expected.is_object()
             || actual.is_string() != expected.is_string()
@@ -320,14 +317,16 @@ impl PayloadTransformer {
 
     /// Executes a JQ program on the given input, handling program compilation caching
     /// and thread-local storage. Returns the JSON output as a string.
+    ///
+    /// Compiled programs are cached and may be evicted in this block.
+    ///
+    /// This block locks.
     fn execute_jq_program(&self, input_str: &str) -> Result<String, String> {
         let start = Instant::now();
 
-        // Get or insert the program and execute it in a single critical section
         let output_str = COMPILED_PROGRAMS.with(|programs| {
             let mut programs = programs.borrow_mut();
             if !programs.contains_key(&self.expression) {
-                // If we're at capacity, remove the oldest entry
                 if programs.len() >= self.max_programs_per_thread {
                     let start_eviction = Instant::now();
                     println!(
