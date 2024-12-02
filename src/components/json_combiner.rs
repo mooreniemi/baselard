@@ -1,4 +1,5 @@
 use serde_json::{Value, Map};
+use tracing::debug;
 use crate::component::{Component, Data, DataType, Error};
 use crate::dag::{DAGError, NodeExecutionContext};
 
@@ -10,7 +11,7 @@ impl Component for JsonCombiner {
     }
 
     fn execute(&self, context: NodeExecutionContext, input: Data) -> Result<Data, DAGError> {
-        println!("JsonCombiner {}: input={input:?}", context.node_id);
+        debug!("JsonCombiner {}: input={input:?}", context.node_id);
 
         match input {
             Data::List(items) => {

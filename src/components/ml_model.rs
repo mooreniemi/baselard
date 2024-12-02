@@ -4,6 +4,7 @@ use ndarray::{Array, CowArray};
 use ort::{Environment, GraphOptimizationLevel, SessionBuilder, Value as OrtValue};
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
+use tracing::info;
 use std::sync::Arc;
 use std::time::Instant;
 use lazy_static::lazy_static;
@@ -46,7 +47,7 @@ impl Component for MLModel {
     }
 
     fn execute(&self, context: NodeExecutionContext, input: Data) -> Result<Data, DAGError> {
-        println!("MLModel '{}' started processing", context.node_id);
+        info!("MLModel '{}' started processing", context.node_id);
         let start_time = Instant::now();
 
         let input_vec = match input {
@@ -75,7 +76,7 @@ impl Component for MLModel {
             self.handle_local_prediction(&context.node_id, &input_vec)?
         };
 
-        println!(
+        info!(
             "MLModel '{}' completed processing in {:?}",
             context.node_id,
             start_time.elapsed()
@@ -142,7 +143,7 @@ impl MLModel {
             .map(|&x| x as f64)
             .collect();
 
-        println!("Local prediction (in {node_id}) result: {result:?}");
+        info!("Local prediction (in {node_id}) result: {result:?}");
         Ok(result)
     }
 
@@ -153,7 +154,7 @@ impl MLModel {
     ) -> Result<Vec<f64>, DAGError> {
         let client = Client::new();
         let input_data = json!({ "features": input });
-        println!("Sending payload: {input_data:?}");
+        info!("Sending payload: {input_data:?}");
 
         let response = client
             .post(endpoint)

@@ -5,29 +5,31 @@ use axum::{
     Router,
 };
 
-use baselard::{dag_visualizer::TreeView, dagir::DAGConfig};
 use baselard::{
     cache::Cache,
     components::{
         crash_test_dummy::CrashTestDummy, data_to_json_processor::DataToJsonProcessor,
         json_combiner::JsonCombiner, json_to_data_processor::JsonToDataProcessor,
-        ml_model::MLModel, string_length_counter::StringLengthCounter, replay::Replay,
+        ml_model::MLModel, replay::Replay, string_length_counter::StringLengthCounter,
     },
 };
+use baselard::{dag_visualizer::TreeView, dagir::DAGConfig};
 
 use baselard::{
     component::{Component, Data, DataType, Error, Registry},
     components::{adder::Adder, payload_transformer::PayloadTransformer},
-    dag::{DAGSettings, DAGError, NodeExecutionContext, DAG},
+    dag::{DAGError, DAGSettings, NodeExecutionContext, DAG},
     dagir::DAGIR,
 };
-use serde_json::{json, Value};
-use serde::Deserialize;
 use core::time::Duration;
-use std::{sync::Arc, thread};
-use std::time::Instant;
+use serde::Deserialize;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::RwLock;
+use std::time::Instant;
+use std::{sync::Arc, thread};
+use tracing::{error, info};
+use tracing_subscriber::EnvFilter;
 
 #[derive(Debug)]
 struct Multiplier {
@@ -51,7 +53,7 @@ impl Component for Multiplier {
                 .map(f64::from)
                 .sum(),
             Data::Json(value) => {
-                println!(
+                info!(
                     "Multiplier {}: received JSON value: {value:?}",
                     context.node_id
                 );
@@ -65,7 +67,7 @@ impl Component for Multiplier {
                 } else if let Some(text) = value.as_str() {
                     text.parse::<f64>().unwrap_or(0.0)
                 } else {
-                    println!("Multiplier received unparseable JSON value: {value:?}");
+                    info!("Multiplier received unparseable JSON value: {value:?}");
                     0.0
                 }
             }
@@ -112,11 +114,13 @@ async fn view_dag(
     Query(params): Query<HashMap<String, String>>,
     Json(dag_config_json): Json<Value>,
 ) -> impl IntoResponse {
-    let view_type = params.get("mode")
-        .map_or(TreeView::Dependency, |v| match v.to_lowercase().as_str() {
-            "execution" => TreeView::Execution,
-            _ => TreeView::Dependency,
-        });
+    let view_type =
+        params
+            .get("mode")
+            .map_or(TreeView::Dependency, |v| match v.to_lowercase().as_str() {
+                "execution" => TreeView::Execution,
+                _ => TreeView::Dependency,
+            });
 
     let ir = match DAGIR::from_json(&dag_config_json) {
         Ok(ir) => ir,
@@ -178,7 +182,12 @@ async fn execute_dag(
                 dag_config.enable_memory_cache = false;
             }
 
-            match DAG::from_ir(&ir, &state.registry, dag_config, Some(Arc::clone(&state.cache))) {
+            match DAG::from_ir(
+                &ir,
+                &state.registry,
+                dag_config,
+                Some(Arc::clone(&state.cache)),
+            ) {
                 Ok(dag) => dag.execute(None).await,
                 Err(e) => Err(DAGError::InvalidConfiguration(e.to_string())),
             }
@@ -187,7 +196,7 @@ async fn execute_dag(
     };
 
     let elapsed = start.elapsed().as_millis();
-    println!("DAG execution took {elapsed}ms");
+    info!("DAG execution took {elapsed}ms");
 
     match result {
         Ok(outputs) => Json(json!({
@@ -229,7 +238,8 @@ async fn execute_by_alias(
                 return (
                     axum::http::StatusCode::NOT_FOUND,
                     format!("No DAG configuration found for alias: {alias}"),
-                ).into_response();
+                )
+                    .into_response();
             }
         }
     };
@@ -241,7 +251,8 @@ async fn execute_by_alias(
                 return (
                     axum::http::StatusCode::BAD_REQUEST,
                     format!("Failed to merge override configuration: {e}"),
-                ).into_response();
+                )
+                    .into_response();
             }
         }
     } else {
@@ -300,14 +311,19 @@ async fn execute_by_alias(
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_target(true)
+        .init();
+
     thread::spawn(move || loop {
         let deadlocks = parking_lot::deadlock::check_deadlock();
         if !deadlocks.is_empty() {
-            eprintln!("{} deadlock(s) detected!", deadlocks.len());
+            error!("{} deadlock(s) detected!", deadlocks.len());
             for (i, threads) in deadlocks.iter().enumerate() {
-                eprintln!("Deadlock #{i} involves the following threads:");
+                error!("Deadlock #{i} involves the following threads:");
                 for thread in threads {
-                    eprintln!(" - Thread ID: {:?}", thread.thread_id());
+                    error!(" - Thread ID: {:?}", thread.thread_id());
                 }
             }
         }
@@ -340,7 +356,7 @@ async fn main() {
         .route("/view", post(view_dag))
         .with_state(state);
 
-    println!("Server running on http://localhost:3000");
+    info!("Server running on http://localhost:3000");
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await

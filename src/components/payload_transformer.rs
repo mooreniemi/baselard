@@ -3,6 +3,7 @@ use crate::dag::{DAGError, NodeExecutionContext};
 use indexmap::IndexMap;
 use jq_rs::compile;
 use serde_json::Value;
+use tracing::debug;
 use std::cell::RefCell;
 use std::process::{Child, Command, ExitStatus};
 use std::time::{Duration, Instant};
@@ -95,7 +96,7 @@ impl PayloadTransformer {
         let (validation_input, expected_output, structure_only) = Self::parse_validation_data(validation_data)?;
         let validation_json = Self::serialize_validation_input(validation_input)?;
 
-        println!("Validating expression: {expression}");
+        debug!("Validating expression: {expression}");
 
         // Run validation in a separate process so we can kill it if it hangs
         let mut child = Self::spawn_validation_process(expression)?;
@@ -108,11 +109,11 @@ impl PayloadTransformer {
 
         // Only compile and cache after successful validation
         COMPILED_PROGRAMS.with(|programs| {
-            println!("Thread {:?}: Compiling JQ program because validation passed", std::thread::current().id());
+            debug!("Thread {:?}: Compiling JQ program because validation passed", std::thread::current().id());
             let mut programs = programs.borrow_mut();
             if !programs.contains_key(expression) {
                 if programs.len() >= MAX_PROGRAMS_PER_THREAD {
-                    println!("Thread {:?}: Removing oldest JQ program because we hit the limit", std::thread::current().id());
+                    debug!("Thread {:?}: Removing oldest JQ program because we hit the limit", std::thread::current().id());
                     programs.shift_remove_index(0);
                 }
                 match compile(expression) {
@@ -128,7 +129,7 @@ impl PayloadTransformer {
             Ok(())
         })?;
 
-        println!("Validation completed in {:?}", start.elapsed());
+        debug!("Validation completed in {:?}", start.elapsed());
         Ok(())
     }
 
@@ -204,7 +205,7 @@ impl PayloadTransformer {
         while start_wait.elapsed() < timeout {
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    println!("Process completed in {:?}", start_wait.elapsed());
+                    debug!("Process completed in {:?}", start_wait.elapsed());
                     return Self::handle_process_status(child, status, program_hash);
                 }
                 Ok(_) => {
@@ -329,12 +330,12 @@ impl PayloadTransformer {
             if !programs.contains_key(&self.expression) {
                 if programs.len() >= self.max_programs_per_thread {
                     let start_eviction = Instant::now();
-                    println!(
+                    debug!(
                         "Thread {:?}: Removing oldest JQ program",
                         std::thread::current().id()
                     );
                     programs.shift_remove_index(0);
-                    println!(
+                    debug!(
                         "Thread {:?}: Removed oldest JQ program in {:?}",
                         std::thread::current().id(),
                         start_eviction.elapsed()
@@ -347,7 +348,7 @@ impl PayloadTransformer {
                     Err(e) => return Err(format!("Failed to compile JQ program: {e}")),
                 };
                 programs.insert(self.expression.clone(), program);
-                println!(
+                debug!(
                     "Thread {:?}: Compiled new JQ program in {:?}",
                     std::thread::current().id(),
                     start_compilation.elapsed()
@@ -362,7 +363,7 @@ impl PayloadTransformer {
         })?;
 
         let execution_time = start.elapsed();
-        println!(
+        debug!(
             "Thread {:?}: JQ execution took {:?}",
             std::thread::current().id(),
             execution_time
@@ -383,7 +384,7 @@ impl Component for PayloadTransformer {
     /// We need to run validation as a separate process because you can't kill the thread and clean up the
     /// C resources that were allocated. Validation cost is paid only once: when configuration happens.
     fn configure(config: Value) -> Result<Self, Error> {
-        println!("PayloadTransformer config: {config:?}");
+        debug!("PayloadTransformer config: {config:?}");
 
         let expression = config["transformation_expression"]
             .as_str()
@@ -408,7 +409,7 @@ impl Component for PayloadTransformer {
     }
 
     fn execute(&self, context: NodeExecutionContext, input: Data) -> Result<Data, DAGError> {
-        println!("PayloadTransformer {}: input={input:?}", context.node_id);
+        debug!("PayloadTransformer {}: input={input:?}", context.node_id);
 
         match input {
             Data::Json(value) => {

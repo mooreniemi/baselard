@@ -2,6 +2,7 @@ use futures::StreamExt;
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
+use tracing::debug;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
@@ -197,11 +198,11 @@ impl DAG {
         cache: Option<Arc<Cache>>,
     ) -> Result<Self, String> {
         let start = Instant::now();
-        println!("DAGSettings: {settings:?}");
+        debug!("DAGSettings: {settings:?}");
 
         let hash_start = Instant::now();
         let ir_hash = ir.calculate_hash();
-        println!("Hash calculation took {:?}", hash_start.elapsed());
+        debug!("Hash calculation took {:?}", hash_start.elapsed());
 
         let mut nodes = HashMap::new();
         let mut edges: HashMap<NodeID, Vec<Edge>> = HashMap::new();
@@ -209,28 +210,28 @@ impl DAG {
         let mut node_ids = HashSet::new();
 
         let dup_start = Instant::now();
-        println!("Checking for duplicate node IDs");
+        debug!("Checking for duplicate node IDs");
         for node in ir.nodes.iter() {
             if !node_ids.insert(node.id.clone()) {
                 return Err(format!("Duplicate node ID found: {}", node.id));
             }
         }
-        println!("Duplicate check took {:?}", dup_start.elapsed());
+        debug!("Duplicate check took {:?}", dup_start.elapsed());
 
-        println!("Registry: {registry:?}");
-        println!("Creating components");
+        debug!("Registry: {registry:?}");
+        debug!("Creating components");
 
         let comp_start = Instant::now();
         for node in ir.nodes.iter() {
-            println!("Starting component creation for node {}", node.id);
+            debug!("Starting component creation for node {}", node.id);
             let component_start = Instant::now();
 
-            println!("Getting component from registry for node {}", node.id);
+            debug!("Getting component from registry for node {}", node.id);
             let component = registry
                 .get_configured(&node.component_type, &node.config)
                 .map_err(|e| format!("Failed to get component for node {}: {}", node.id, e))?;
 
-            println!("Component creation successful for node {}", node.id);
+            debug!("Component creation successful for node {}", node.id);
 
             if let Some(input) = &node.inputs {
                 if !input.validate_type(&component.input_type()) {
@@ -244,7 +245,7 @@ impl DAG {
                 initial_inputs.insert(node.id.clone(), input.clone());
             }
 
-            println!("Checking dependencies for node {}", node.id);
+            debug!("Checking dependencies for node {}", node.id);
             if let Some(deps) = ir.edges.get(&node.id) {
                 for dep in deps {
                     if !node_ids.contains(&dep.source) {
@@ -261,13 +262,13 @@ impl DAG {
             }
 
             nodes.insert(node.id.clone(), component);
-            println!(
+            debug!(
                 "Node {} setup took {:?}",
                 node.id,
                 component_start.elapsed()
             );
         }
-        println!("Total component creation took {:?}", comp_start.elapsed());
+        debug!("Total component creation took {:?}", comp_start.elapsed());
 
         let dag = Self {
             nodes: Arc::new(nodes),
@@ -279,7 +280,7 @@ impl DAG {
             alias: ir.alias.clone(),
         };
 
-        println!("Total DAG setup took {:?}", start.elapsed());
+        debug!("Total DAG setup took {:?}", start.elapsed());
         Ok(dag)
     }
 
@@ -298,7 +299,7 @@ impl DAG {
     ) -> Result<IndexMap<NodeID, Data>, DAGError> {
         let start_time = Instant::now();
         let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
-        println!(
+        debug!(
             "[{:.3}s] Starting DAG execution with request_id: {}",
             start_time.elapsed().as_secs_f32(),
             request_id
@@ -309,7 +310,7 @@ impl DAG {
                 if let Some(cached_result) =
                     cache.get_cached_result(self.ir_hash, &self.initial_inputs)
                 {
-                    println!(
+                    debug!(
                         "[{:.3}s] Cache hit! Returning cached result",
                         start_time.elapsed().as_secs_f32()
                     );
@@ -342,7 +343,7 @@ impl DAG {
             );
         }
 
-        println!(
+        debug!(
             "[{:.3}s] DAG execution completed",
             start_time.elapsed().as_secs_f32()
         );
@@ -350,7 +351,7 @@ impl DAG {
     }
 
     fn compute_execution_order(&self, elapsed_secs: f32) -> Result<Vec<NodeID>, DAGError> {
-        println!("[{elapsed_secs:.3}s] Starting topological sort");
+        debug!("[{elapsed_secs:.3}s] Starting topological sort");
         let mut in_degree: HashMap<NodeID, usize> = HashMap::new();
         let mut graph: HashMap<NodeID, Vec<NodeID>> = HashMap::new();
 
@@ -369,7 +370,7 @@ impl DAG {
             }
         }
 
-        println!("Initial in-degrees: {in_degree:?}");
+        debug!("Initial in-degrees: {in_degree:?}");
 
         let mut zero_degree_nodes: Vec<_> = in_degree
             .iter()
@@ -395,7 +396,7 @@ impl DAG {
             }
         }
 
-        println!(
+        debug!(
             "[{elapsed_secs:.3}s] Topological sort complete. Execution order: {sorted_nodes:?}"
         );
 
@@ -407,11 +408,11 @@ impl DAG {
     }
 
     fn setup_execution_state(&self, elapsed_secs: f32) -> (Notifiers, SharedResults) {
-        println!("[{elapsed_secs:.3}s] Setting up notification channels");
+        debug!("[{elapsed_secs:.3}s] Setting up notification channels");
 
         let mut results = IndexMap::new();
         results.extend((*self.initial_inputs).clone());
-        println!(
+        debug!(
             "[{:.3}s] Initialized with {} initial inputs",
             elapsed_secs,
             self.initial_inputs.len()
@@ -439,7 +440,7 @@ impl DAG {
         start_time: Instant,
         request_id: RequestId,
     ) -> Result<IndexMap<NodeID, Data>, DAGError> {
-        println!(
+        debug!(
             "[{:.3}s] Spawning tasks for {} nodes",
             start_time.elapsed().as_secs_f32(),
             sorted_nodes.len()
@@ -450,7 +451,7 @@ impl DAG {
             let (tx, _) = watch::channel(());
             notifiers.write().unwrap().insert(node_id.clone(), tx);
         }
-        println!(
+        debug!(
             "[{:.3}s] Notification channels setup took {:.3}s",
             start_time.elapsed().as_secs_f32(),
             setup_start.elapsed().as_secs_f32()
@@ -470,7 +471,7 @@ impl DAG {
                 (node_id, handle)
             })
             .collect();
-        println!(
+        debug!(
             "[{:.3}s] Task spawning took {:.3}s",
             start_time.elapsed().as_secs_f32(),
             spawn_start.elapsed().as_secs_f32()
@@ -497,14 +498,14 @@ impl DAG {
             });
             abort_handles.push(id);
         }
-        println!(
+        debug!(
             "[{:.3}s] Future preparation took {:.3}s",
             start_time.elapsed().as_secs_f32(),
             futures_start.elapsed().as_secs_f32()
         );
 
         let mut all_tasks = futures::stream::FuturesUnordered::from_iter(futures);
-        println!(
+        debug!(
             "[{:.3}s] Starting parallel execution of {} tasks",
             start_time.elapsed().as_secs_f32(),
             abort_handles.len()
@@ -512,7 +513,7 @@ impl DAG {
 
         while let Some(result) = all_tasks.next().await {
             if let Err((failed_node, error)) = result {
-                println!(
+                debug!(
                     "[{:.3}s] Node {} failed, aborting remaining tasks",
                     start_time.elapsed().as_secs_f32(),
                     failed_node
@@ -522,7 +523,7 @@ impl DAG {
         }
 
         let final_results = (*shared_results.read().unwrap()).clone();
-        println!(
+        debug!(
             "[{:.3}s] All tasks completed successfully",
             start_time.elapsed().as_secs_f32(),
         );
@@ -557,7 +558,7 @@ impl DAG {
         let timeout_ms = self.settings.per_node_timeout_ms();
 
         tokio::spawn(async move {
-            println!(
+            debug!(
                 "[{:.3}s] Node {} waiting for dependencies",
                 start_time.elapsed().as_secs_f32(),
                 node_id
@@ -619,7 +620,7 @@ impl DAG {
     ) -> Result<(), DAGError> {
         let wait_start = Instant::now();
 
-        println!(
+        debug!(
             "[{:.3}s] Node {} waiting for {} dependencies",
             start_time.elapsed().as_secs_f32(),
             node_id,
@@ -634,7 +635,7 @@ impl DAG {
             }
         }
 
-        println!(
+        debug!(
             "[{:.3}s] Node {} verifying {} dependency results",
             start_time.elapsed().as_secs_f32(),
             node_id,
@@ -652,7 +653,7 @@ impl DAG {
             }
         }
 
-        println!(
+        debug!(
             "[{:.3}s] Node {} waited {:.3}s for dependencies",
             start_time.elapsed().as_secs_f32(),
             node_id,
@@ -685,7 +686,7 @@ impl DAG {
                     &nodes.get(&node_id).unwrap().input_type(),
                     start_time,
                 )?;
-                println!(
+                debug!(
                     "[{:.3}s] Input preparation for node {} took {:.3}s",
                     start_time.elapsed().as_secs_f32(),
                     node_id,
@@ -698,7 +699,7 @@ impl DAG {
             let execution_context = NodeExecutionContext::new(node_id.clone(), request_id);
             let component = nodes.get(&node_id).unwrap();
             let output = component.execute(execution_context, input_data)?;
-            println!(
+            debug!(
                 "[{:.3}s] Node {} execution took {:.3}s",
                 start_time.elapsed().as_secs_f32(),
                 node_id,
@@ -721,7 +722,7 @@ impl DAG {
         if let Some(ms) = timeout_ms {
             match timeout(Duration::from_millis(ms), execution).await {
                 Ok(result) => {
-                    println!(
+                    debug!(
                         "[{:.3}s] Node {} await took {:.3}s (was within timeout)",
                         start_time.elapsed().as_secs_f32(),
                         node_id,
@@ -756,7 +757,7 @@ impl DAG {
         let (id, output) = result;
         let store_start = Instant::now();
         shared_results.write().unwrap().insert(id.clone(), output);
-        println!(
+        debug!(
             "[{:.3}s] Node {} result storage took {:.3}s",
             start_time.elapsed().as_secs_f32(),
             id,
@@ -765,14 +766,14 @@ impl DAG {
 
         let notify_start = Instant::now();
         if let Some(sender) = notifiers.read().unwrap().get(&id) {
-            println!(
+            debug!(
                 "[{:.3}s] Notifying dependents of node {} completion",
                 start_time.elapsed().as_secs_f32(),
                 id
             );
             let _ = sender.send(());
         }
-        println!(
+        debug!(
             "[{:.3}s] Node {} notification took {:.3}s",
             start_time.elapsed().as_secs_f32(),
             id,
@@ -788,7 +789,7 @@ impl DAG {
         expected_type: &DataType,
         start_time: Instant,
     ) -> Result<Data, DAGError> {
-        println!(
+        debug!(
             "[{:.3}s] Preparing input data for node {node_id}",
             start_time.elapsed().as_secs_f32()
         );
@@ -836,7 +837,7 @@ impl DAG {
         request_id: &RequestId,
         start_time: Instant,
     ) {
-        println!(
+        debug!(
             "[{:.3}s] Starting cache storage",
             start_time.elapsed().as_secs_f32()
         );
@@ -849,7 +850,7 @@ impl DAG {
 
         tokio::spawn(async move {
             cache.store_result(ir_hash, &inputs, &results_copy, &request_id);
-            println!(
+            debug!(
                 "[{:.3}s] Cache storage spawned, setup took {:.3}s",
                 start_time.elapsed().as_secs_f32(),
                 cache_start.elapsed().as_secs_f32()
@@ -890,7 +891,7 @@ impl DAG {
     #[must_use]
     pub fn get_cached_result(&self) -> Option<DAGResult> {
         if !self.settings.enable_memory_cache {
-            println!("Memory cache is disabled");
+            debug!("Memory cache is disabled");
             return None;
         }
         self.cache

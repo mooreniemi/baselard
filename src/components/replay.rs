@@ -1,4 +1,5 @@
 use serde_json::Value;
+use tracing::info;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek};
@@ -76,7 +77,7 @@ impl Component for Replay {
                     .map(String::from)
                     .collect()
             });
-        println!("Replaying node {node_id} with request_id {request_id} and target_nodes {target_nodes:?}");
+        info!("Replaying node {node_id} with request_id {request_id} and target_nodes {target_nodes:?}");
 
         let historical_result = self
             .get_historical_result(&request_id.to_string())
@@ -134,7 +135,7 @@ impl Replay {
 
             if let Ok(result) = serde_json::from_str::<DAGResult>(&line) {
                 if result.request_id == *request_id {
-                    println!("Found matching line: {line}, and caching position");
+                    info!("Found matching line: {line}, and caching position");
                     self.position_cache.insert(request_id.to_string(), current_pos);
                     return Ok(Some(result));
                 }
@@ -142,7 +143,7 @@ impl Replay {
             current_pos += line.len() as u64 + 1; // +1 for newline
         }
 
-        println!("Searched {searched} lines in history file");
+        info!("Searched {searched} lines in history file");
         Ok(None)
     }
 }

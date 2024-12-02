@@ -1,5 +1,6 @@
 use serde_json::Value;
 use spin_sleep::SpinSleeper;
+use tracing::info;
 use std::time::Instant;
 use crate::component::{Component, Data, DataType, Error};
 use crate::dag::{DAGError, NodeExecutionContext};
@@ -37,14 +38,14 @@ impl Component for CrashTestDummy {
     fn execute(&self, context: NodeExecutionContext, _input: Data) -> Result<Data, DAGError> {
         if let Some(duration) = self.sleep_duration_ms {
             let start_time = Instant::now();
-            println!(
+            info!(
                 "CrashTestDummy {}: Sleeping for {duration}ms (spin threshold: {}μs)",
                 context.node_id,
                 self.spin_threshold_us
             );
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             self.sleeper.sleep(std::time::Duration::from_millis(duration as u64));
-            println!(
+            info!(
                 "CrashTestDummy {}: Done sleeping after {:.3}s",
                 context.node_id,
                 start_time.elapsed().as_secs_f32()

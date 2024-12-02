@@ -1,4 +1,5 @@
 use serde_json::Value;
+use tracing::info;
 
 use crate::component::{Component, Data, DataType, Error};
 use crate::dag::{DAGError, NodeExecutionContext};
@@ -15,7 +16,7 @@ impl Component for Adder {
     }
 
     fn execute(&self, context: NodeExecutionContext, input: Data) -> Result<Data, DAGError> {
-        println!("Adder {}: input={input:?}", context.node_id);
+        info!("Adder {}: input={input:?}", context.node_id);
         let input_value = match input {
             Data::Integer(v) => v,
             Data::List(list) => list.into_iter().filter_map(|v| v.as_integer()).sum(),

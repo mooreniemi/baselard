@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use tracing::debug;
 
 use crate::component::{Component, Data, DataType, Error};
 use crate::dag::{DAGError, NodeExecutionContext};
@@ -11,7 +12,7 @@ impl Component for DataToJsonProcessor {
     }
 
     fn execute(&self, context: NodeExecutionContext, input: Data) -> Result<Data, DAGError> {
-        println!("DataToJsonProcessor {}: input={input:?}", context.node_id);
+        debug!("DataToJsonProcessor {}: input={input:?}", context.node_id);
         let json_input = match input {
             Data::Null => json!({ "type": "null" }),
             Data::Json(value) => {

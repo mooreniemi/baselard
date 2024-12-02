@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracing::debug;
 
 use crate::dag::DAGError;
 use crate::dag::NodeExecutionContext;
@@ -310,7 +311,7 @@ impl Registry {
 
         if let Ok(cache) = self.configured_component_cache.read() {
             if let Some(component) = cache.get(&key) {
-                println!("Configured component cache hit for {name}");
+                debug!("Configured component cache hit for {name}");
                 return Ok(Arc::clone(component));
             }
         } else {
@@ -322,7 +323,7 @@ impl Registry {
             .get(name)
             .ok_or_else(|| Error::NotRegistered(name.to_string()))?;
 
-        println!("Configured component cache miss for {name}");
+        debug!("Configured component cache miss for {name}");
         let component = factory(config.clone())?;
 
         if let Ok(mut cache) = self.configured_component_cache.write() {

@@ -4,6 +4,7 @@ use std::{hash::DefaultHasher, time::Instant};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sorted_vec::SortedVec;
+use tracing::debug;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::hash::Hash;
@@ -93,7 +94,7 @@ impl DAGIR {
         let result = Self::from_config(config.clone());
 
         let duration = start.elapsed();
-        println!(
+        debug!(
             "DAGIR ({}, {:?}) from_json took {duration:?}",
             config.alias, config.metadata
         );
