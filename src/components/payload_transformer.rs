@@ -410,32 +410,33 @@ impl Component for PayloadTransformer {
 
     fn execute(&self, context: NodeExecutionContext, input: Data) -> Result<Data, DAGError> {
         debug!("PayloadTransformer {}: input={input:?}", context.node_id);
+        let node_id = context.node_id;
 
         match input {
             Data::Json(value) => {
                 // FIXME: node_id should be known to the instance ultimately
                 let input_str = serde_json::to_string(&value)
                     .map_err(|err| DAGError::ExecutionError {
-                        node_id: "unknown_payload_transformer".to_string(),
+                        node_id: node_id.clone(),
                         reason: format!("Failed to serialize input: {err}"),
                     })?;
 
                 let output_str = self.execute_jq_program(&input_str)
                     .map_err(|err| DAGError::ExecutionError {
-                        node_id: "unknown_payload_transformer".to_string(),
+                        node_id: node_id.clone(),
                         reason: err,
                     })?;
 
                 let output_json: Value = serde_json::from_str(&output_str)
                     .map_err(|err| DAGError::ExecutionError {
-                        node_id: "unknown_payload_transformer".to_string(),
+                        node_id: node_id.clone(),
                         reason: format!("Failed to parse jq output: {err}"),
                     })?;
 
                 Ok(Data::Json(output_json))
             }
             _ => Err(DAGError::ExecutionError {
-                node_id: "unknown_payload_transformer".to_string(),
+                node_id: node_id.clone(),
                 reason: "Invalid input type, expected JSON".to_string(),
             }),
         }
